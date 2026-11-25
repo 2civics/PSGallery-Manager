@@ -1,6 +1,6 @@
 ﻿<#PSScriptInfo
 
-.VERSION 2.4.1
+.VERSION 2.4.2
 
 .GUID 8f4e2b91-6c3a-4d7e-9b12-5a8f0c3d7e91
 
@@ -17,11 +17,10 @@
 .PROJECTURI https://www.powershellgallery.com/packages/PSGallery-Manager/
 
 .RELEASENOTES
-v2.4.1:
-- Updated package downloads to save directly to DefaultSavePath by default instead of always prompting for a folder (Shift+Click still lets you choose a folder on demand).
-- Fixed Import-PubTargetMetadata so saved default Company Name and Copyright values pre-fill empty fields even when loading existing .ps1 or .psd1 files that already contain metadata blocks.
-- Fixed Discover Gallery details pane layout by dynamically sizing header labels for wrapped titles and moving Tags into the scrollable details box so the description area is never clipped or crowded out.
-- Fixed inconsistent download counts when switching Discover Gallery sort modes (Most Downloaded, Recently Updated, Name A-Z) by caching and hydrating exact FindPackagesById() totals across search pages.
+v2.4.2:
+- Added on-demand translation in the Discover Gallery details pane with a Translate / Show Original toggle button and a 12-language target selector (auto-detecting source language for descriptions and release notes).
+- Added in-memory translation caching per package version and target language so switching languages or revisiting packages loads instantly without redundant requests.
+- Enabled automatic height sizing on the Discover details action bar so wrapped button rows never clip at any window width or Windows DPI scaling level.
 
 #>
 
@@ -38,6 +37,9 @@ v2.4.1:
         - Publish to PowerShell Gallery: Publish standalone .ps1 scripts or module folders (.psd1/.psm1) with one-click Major, Minor, or Patch version bumps, automatic metadata injection, and pre-publish validation.
         - Encrypted API Key Storage: Protect your PowerShell Gallery API key locally with Windows DPAPI encryption so you never have to paste it repeatedly.
         - Desktop Shortcut Creator: Create Windows .lnk shortcuts for any .ps1 script with custom icons, hidden or normal window modes, execution policy bypass, and optional Administrator elevation.
+
+
+
 
 
 
@@ -1081,16 +1083,17 @@ $pnlDetails.Add_SizeChanged({ Update-GalleryDetailsLayout })
 
 $pnlDetActions = New-Object Windows.Forms.FlowLayoutPanel
 $pnlDetActions.Dock = 'Bottom'
-$pnlDetActions.Height = 86
+$pnlDetActions.AutoSize = $true
+$pnlDetActions.AutoSizeMode = 'GrowAndShrink'
 $pnlDetActions.FlowDirection = 'LeftToRight'
 $pnlDetActions.WrapContents = $true
-$pnlDetActions.Padding = New-Object Windows.Forms.Padding(0, 8, 0, 0)
+$pnlDetActions.Padding = New-Object Windows.Forms.Padding(0, 8, 0, 4)
 $pnlDetails.Controls.Add($pnlDetActions)
 
 $btnInstallPkg = New-Object Windows.Forms.Button
 $btnInstallPkg.Text = 'Install to PC'
 $btnInstallPkg.Font = $fontUiBold
-$btnInstallPkg.Size = New-Object Drawing.Size(130, 34)
+$btnInstallPkg.Size = New-Object Drawing.Size(124, 34)
 $btnInstallPkg.FlatStyle = 'Flat'
 $btnInstallPkg.Cursor = 'Hand'
 $btnInstallPkg.Enabled = $false
@@ -1099,7 +1102,7 @@ $pnlDetActions.Controls.Add($btnInstallPkg)
 $btnDownloadPkg = New-Object Windows.Forms.Button
 $btnDownloadPkg.Text = 'Download / Save'
 $btnDownloadPkg.Font = $fontUiBold
-$btnDownloadPkg.Size = New-Object Drawing.Size(140, 34)
+$btnDownloadPkg.Size = New-Object Drawing.Size(134, 34)
 $btnDownloadPkg.FlatStyle = 'Flat'
 $btnDownloadPkg.Cursor = 'Hand'
 $btnDownloadPkg.Enabled = $false
@@ -1107,27 +1110,45 @@ $pnlDetActions.Controls.Add($btnDownloadPkg)
 
 $btnViewCode = New-Object Windows.Forms.Button
 $btnViewCode.Text = 'Inspect Code'
-$btnViewCode.Size = New-Object Drawing.Size(115, 34)
+$btnViewCode.Size = New-Object Drawing.Size(112, 34)
 $btnViewCode.FlatStyle = 'Flat'
 $btnViewCode.Cursor = 'Hand'
 $btnViewCode.Enabled = $false
 $pnlDetActions.Controls.Add($btnViewCode)
 
-$btnOpenWeb = New-Object Windows.Forms.Button
-$btnOpenWeb.Text = 'Open Gallery Page'
-$btnOpenWeb.Size = New-Object Drawing.Size(140, 34)
-$btnOpenWeb.FlatStyle = 'Flat'
-$btnOpenWeb.Cursor = 'Hand'
-$btnOpenWeb.Enabled = $false
-$pnlDetActions.Controls.Add($btnOpenWeb)
+$btnTranslate = New-Object Windows.Forms.Button
+$btnTranslate.Text = 'Translate'
+$btnTranslate.Size = New-Object Drawing.Size(105, 34)
+$btnTranslate.FlatStyle = 'Flat'
+$btnTranslate.Cursor = 'Hand'
+$btnTranslate.Enabled = $false
+$toolTip.SetToolTip($btnTranslate, 'Translate package description and release notes (auto-detects source language)')
+$pnlDetActions.Controls.Add($btnTranslate)
 
-$btnCopyCmd = New-Object Windows.Forms.Button
-$btnCopyCmd.Text = 'Copy Install Cmd'
-$btnCopyCmd.Size = New-Object Drawing.Size(130, 34)
-$btnCopyCmd.FlatStyle = 'Flat'
-$btnCopyCmd.Cursor = 'Hand'
-$btnCopyCmd.Enabled = $false
-$pnlDetActions.Controls.Add($btnCopyCmd)
+$cmbTargetLang = New-Object Windows.Forms.ComboBox
+$cmbTargetLang.DropDownStyle = 'DropDownList'
+$cmbTargetLang.Width = 118
+$cmbTargetLang.Font = $fontUi
+$cmbTargetLang.Margin = New-Object Windows.Forms.Padding(4, 6, 3, 3)
+$cmbTargetLang.Enabled = $false
+[void]$cmbTargetLang.Items.AddRange(@(
+    'English (en)',
+    'Spanish (es)',
+    'German (de)',
+    'French (fr)',
+    'Portuguese (pt)',
+    'Italian (it)',
+    'Dutch (nl)',
+    'Polish (pl)',
+    'Russian (ru)',
+    'Japanese (ja)',
+    'Korean (ko)',
+    'Chinese (zh-CN)'
+))
+$cmbTargetLang.SelectedIndex = 0
+$toolTip.SetToolTip($cmbTargetLang, 'Target language for package description translation')
+$pnlDetActions.Controls.Add($cmbTargetLang)
+
 
 $txtDetBody = New-Object Windows.Forms.TextBox
 $txtDetBody.Multiline = $true
@@ -2983,7 +3004,7 @@ function Apply-Theme {
         $btn.FlatAppearance.MouseOverBackColor = $p.AccentHover
     }
 
-    foreach ($btn in @($btnPrevPage, $btnNextPage, $btnDownloadPkg, $btnViewCode, $btnOpenWeb, $btnCopyCmd, $btnPubDownload, $btnPubInspect, $btnPubOpenWeb, $btnCheckUpdates, $btnUpdateLocal, $btnOpenLocalFolder, $btnEditLocal, $btnLocalShortcut, $btnToggleApi, $btnOpenApiKeysPage, $btnBrowseSave, $btnElevateNow, $btnShortcutDlgTop, $btnOpenShortcutTool, $btnPubClearRecent, $btnPubBrowse, $btnPubBumpMajor, $btnPubBumpMinor, $btnPubBumpPatch, $btnPubSaveAuthor, $btnPubSaveMeta, $btnPubCheckLive, $btnPubValidate, $btnPubRepairTls, $btnPubCancel, $btnPubClearLog)) {
+    foreach ($btn in @($btnPrevPage, $btnNextPage, $btnDownloadPkg, $btnViewCode, $btnPubDownload, $btnPubInspect, $btnPubOpenWeb, $btnCheckUpdates, $btnUpdateLocal, $btnOpenLocalFolder, $btnEditLocal, $btnLocalShortcut, $btnToggleApi, $btnOpenApiKeysPage, $btnBrowseSave, $btnElevateNow, $btnShortcutDlgTop, $btnOpenShortcutTool, $btnPubClearRecent, $btnPubBrowse, $btnPubBumpMajor, $btnPubBumpMinor, $btnPubBumpPatch, $btnPubSaveAuthor, $btnPubSaveMeta, $btnPubCheckLive, $btnPubValidate, $btnPubRepairTls, $btnPubCancel, $btnPubClearLog)) {
         $btn.FlatStyle = 'Flat'
         $btn.BackColor = $p.BtnSecondary
         $btn.ForeColor = $p.FgPrimary
@@ -2999,6 +3020,18 @@ function Apply-Theme {
         $btn.FlatAppearance.BorderColor = $p.Danger
         $btn.FlatAppearance.BorderSize = 1
         $btn.FlatAppearance.MouseOverBackColor = $p.BtnSecHover
+    }
+
+    foreach ($btn in @($btnPrevPage, $btnNextPage, $btnViewCode, $btnTranslate, $btnPubDownload, $btnPubInspect, $btnPubOpenWeb, $btnUpdateLocal, $btnOpenLocalFolder, $btnEditLocal, $btnLocalShortcut, $btnToggleApi, $btnOpenApiKeysPage, $btnBrowseSave, $btnOpenShortcutTool, $btnShortcutDlgTop, $btnPubClearRecent, $btnPubBrowse, $btnPubSaveAuthor, $btnPubSaveMeta, $btnPubCheckLive, $btnPubValidate, $btnPubRepairTls, $btnPubCancel, $btnPubClearLog)) {
+    $btn.BackColor = $p.BtnSecondary
+    $btn.ForeColor = $p.FgPrimary
+    $btn.FlatAppearance.BorderColor = $p.Border
+}
+
+    foreach ($cmb in @($cmbTheme, $cmbCategory, $cmbItemType, $cmbSort, $cmbSetScope, $cmbPubRecent, $cmbTargetLang)) {
+        $cmb.BackColor = $p.BgInput
+        $cmb.ForeColor = $p.FgPrimary
+        Initialize-ThemedComboBox -ComboBox $cmb
     }
 
     $ctxLocalMenu.BackColor = $p.BgPanel
@@ -3452,13 +3485,54 @@ function Invoke-GallerySearch {
     }
 }
 
+$script:TranslationCache      = @{}
+$script:IsShowingTranslation  = $false
+$script:CurrentDetailsPkg     = $null
+
+function Format-PackageDetailsBody {
+    param(
+        [Parameter(Mandatory)][PSCustomObject]$Pkg,
+        [string]$DescriptionText = $Pkg.Description,
+        [string]$ReleaseNotesText = $Pkg.ReleaseNotes,
+        [string]$TranslatedBanner = ''
+    )
+
+    $body = New-Object System.Text.StringBuilder
+    if (-not [string]::IsNullOrWhiteSpace($TranslatedBanner)) {
+        [void]$body.AppendLine("[$TranslatedBanner]`r`n")
+    }
+    [void]$body.AppendLine("DESCRIPTION:`r`n$DescriptionText")
+    if (-not [string]::IsNullOrWhiteSpace($ReleaseNotesText)) {
+        [void]$body.AppendLine("`r`nRELEASE NOTES:`r`n$ReleaseNotesText")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Pkg.ProjectUrl)) {
+        [void]$body.AppendLine("`r`nPROJECT URL: $($Pkg.ProjectUrl)")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Pkg.Tags)) {
+        [void]$body.AppendLine("`r`nTAGS:`r`n$($Pkg.Tags)")
+    }
+    return $body.ToString()
+}
+
+function Get-SelectedTargetLangCode {
+    $sel = [string]$cmbTargetLang.SelectedItem
+    if ($sel -match '\(([a-zA-Z\-]+)\)$') {
+        return $Matches[1]
+    }
+    return 'en'
+}
+
 function Update-GalleryDetailsPane {
     param([PSCustomObject]$Pkg)
+    $script:CurrentDetailsPkg    = $Pkg
+    $script:IsShowingTranslation = $false
+    $btnTranslate.Text           = 'Translate'
+
     if ($null -eq $Pkg) {
         $script:SelectedGalleryPkgId = ''
         $lblDetTitle.Text = 'No package selected'; $lblDetMeta.Text = ''; $txtDetBody.Text = ''
         if (Get-Command Update-GalleryDetailsLayout -ErrorAction SilentlyContinue) { Update-GalleryDetailsLayout }
-        foreach ($b in @($btnInstallPkg, $btnDownloadPkg, $btnViewCode, $btnOpenWeb, $btnCopyCmd)) { $b.Enabled = $false }
+        foreach ($b in @($btnInstallPkg, $btnDownloadPkg, $btnViewCode, $btnTranslate, $cmbTargetLang)) { $b.Enabled = $false }
         return
     }
 
@@ -3480,13 +3554,8 @@ function Update-GalleryDetailsPane {
     }
     if (Get-Command Update-GalleryDetailsLayout -ErrorAction SilentlyContinue) { Update-GalleryDetailsLayout }
 
-    $body = New-Object System.Text.StringBuilder
-    [void]$body.AppendLine("DESCRIPTION:`r`n$($Pkg.Description)")
-    if (-not [string]::IsNullOrWhiteSpace($Pkg.ReleaseNotes)) { [void]$body.AppendLine("`r`nRELEASE NOTES:`r`n$($Pkg.ReleaseNotes)") }
-    if (-not [string]::IsNullOrWhiteSpace($Pkg.ProjectUrl))   { [void]$body.AppendLine("`r`nPROJECT URL: $($Pkg.ProjectUrl)") }
-    if (-not [string]::IsNullOrWhiteSpace($Pkg.Tags))         { [void]$body.AppendLine("`r`nTAGS:`r`n$($Pkg.Tags)") }
-    $txtDetBody.Text = $body.ToString()
-    foreach ($b in @($btnInstallPkg, $btnDownloadPkg, $btnViewCode, $btnOpenWeb, $btnCopyCmd)) { $b.Enabled = $true }
+    $txtDetBody.Text = Format-PackageDetailsBody -Pkg $Pkg
+    foreach ($b in @($btnInstallPkg, $btnDownloadPkg, $btnViewCode, $btnTranslate, $cmbTargetLang)) { $b.Enabled = $true }
 
     if ($isCached) { return }
 
@@ -3519,6 +3588,120 @@ function Update-GalleryDetailsPane {
             $verPart = if ($state.Pkg.VersionDownloads -gt 0) { " (v$($state.Pkg.Version): $($state.Pkg.VersionDownloads.ToString('N0')))" } else { '' }
             $lblDetMeta.Text = "Type: $($state.Pkg.Type)   |   Author: $($state.Pkg.Authors)`r`nDownloads: $($state.Pkg.Downloads.ToString('N0'))$verPart   |   Published: $($state.Pkg.Published)"
             if (Get-Command Update-GalleryDetailsLayout -ErrorAction SilentlyContinue) { Update-GalleryDetailsLayout }
+        }
+    }
+}
+
+function Invoke-TranslatePackageDetails {
+    param([switch]$ForceTranslate)
+
+    $pkg = $script:CurrentDetailsPkg
+    if ($null -eq $pkg) { return }
+
+    if ($script:IsShowingTranslation -and (-not $ForceTranslate)) {
+        $script:IsShowingTranslation = $false
+        $btnTranslate.Text           = 'Translate'
+        $txtDetBody.Text             = Format-PackageDetailsBody -Pkg $pkg
+        $lblStatus.Text              = "Showing original description for '$($pkg.Id)'."
+        return
+    }
+
+    $langCode  = Get-SelectedTargetLangCode
+    $langLabel = [string]$cmbTargetLang.SelectedItem
+    $cacheKey  = "$($pkg.Id)|$($pkg.Version)|$langCode"
+
+    if ($script:TranslationCache.ContainsKey($cacheKey)) {
+        $entry = $script:TranslationCache[$cacheKey]
+        $script:IsShowingTranslation = $true
+        $btnTranslate.Text           = 'Show Original'
+        $txtDetBody.Text             = Format-PackageDetailsBody -Pkg $pkg -DescriptionText $entry.Description -ReleaseNotesText $entry.ReleaseNotes -TranslatedBanner "Translated to $langLabel"
+        $lblStatus.Text              = "Translated '$($pkg.Id)' to $langLabel (cached)."
+        return
+    }
+
+    $lblStatus.Text       = "Translating '$($pkg.Id)' to $langLabel..."
+    $btnTranslate.Enabled = $false
+
+    $work = {
+        param($descText, $notesText, $targetLang)
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+        function ConvertTo-TranslatedBlock {
+            param([string]$InputText, [string]$Lang)
+            if ([string]::IsNullOrWhiteSpace($InputText)) { return '' }
+
+            $outLines = New-Object System.Collections.Generic.List[string]
+            foreach ($line in ($InputText -split "`r?`n")) {
+                if ([string]::IsNullOrWhiteSpace($line)) {
+                    $outLines.Add('')
+                    continue
+                }
+
+                # Split very long single lines into <= 1200-char chunks so GET URLs stay safe
+                $chunks = New-Object System.Collections.Generic.List[string]
+                $remaining = $line
+                while ($remaining.Length -gt 1200) {
+                    $splitAt = $remaining.LastIndexOf(' ', 1200)
+                    if ($splitAt -lt 200) { $splitAt = 1200 }
+                    $chunks.Add($remaining.Substring(0, $splitAt))
+                    $remaining = $remaining.Substring($splitAt).TrimStart()
+                }
+                if ($remaining.Length -gt 0) { $chunks.Add($remaining) }
+
+                $lineBuilder = New-Object System.Text.StringBuilder
+                foreach ($chunk in $chunks) {
+                    $encoded = [uri]::EscapeDataString($chunk)
+                    $uri     = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$Lang&dt=t&q=$encoded"
+                    $resp    = Invoke-RestMethod -Uri $uri -Method Get -TimeoutSec 15 -ErrorAction Stop
+
+                    if ($null -ne $resp -and $resp.Count -gt 0 -and $null -ne $resp[0]) {
+                        foreach ($seg in $resp[0]) {
+                            if ($null -ne $seg -and $seg.Count -gt 0 -and $null -ne $seg[0]) {
+                                [void]$lineBuilder.Append([string]$seg[0])
+                            }
+                        }
+                    }
+                }
+                $outLines.Add($lineBuilder.ToString())
+            }
+            return ($outLines -join "`r`n")
+        }
+
+        $tDesc  = ConvertTo-TranslatedBlock -InputText $descText  -Lang $targetLang
+        $tNotes = ConvertTo-TranslatedBlock -InputText $notesText -Lang $targetLang
+
+        return [PSCustomObject]@{
+            Description  = $tDesc
+            ReleaseNotes = $tNotes
+        }
+    }
+
+    $state = @{
+        Pkg       = $pkg
+        CacheKey  = $cacheKey
+        LangLabel = $langLabel
+    }
+
+    Invoke-AsyncTask -Work $work -ArgumentList @($pkg.Description, $pkg.ReleaseNotes, $langCode) -State $state -OnComplete {
+        param($res, $err, $st)
+        $btnTranslate.Enabled = ($null -ne $script:CurrentDetailsPkg)
+
+        if ($err -or $null -eq $res) {
+            $lblStatus.Text = "Translation failed: $err"
+            [Windows.Forms.MessageBox]::Show("Could not translate package details:`n$err", 'Translation Error', 'OK', 'Warning') | Out-Null
+            return
+        }
+
+        $translated = $res | Select-Object -First 1
+        if ($null -eq $translated) { return }
+
+        $script:TranslationCache[$st.CacheKey] = $translated
+
+        if ($script:SelectedGalleryPkgId -eq $st.Pkg.Id) {
+            $script:IsShowingTranslation = $true
+            $btnTranslate.Text           = 'Show Original'
+            $txtDetBody.Text             = Format-PackageDetailsBody -Pkg $st.Pkg -DescriptionText $translated.Description -ReleaseNotesText $translated.ReleaseNotes -TranslatedBanner "Translated to $($st.LangLabel)"
+            $lblStatus.Text              = "Translated '$($st.Pkg.Id)' to $($st.LangLabel)."
         }
     }
 }
@@ -3804,13 +3987,12 @@ $dgvGallery.Add_SelectionChanged({
 $btnInstallPkg.Add_Click({ if ($dgvGallery.SelectedRows.Count -gt 0) { Invoke-InstallPackage -Pkg $script:CurrentGalleryResults[$dgvGallery.SelectedRows[0].Index] } })
 $btnDownloadPkg.Add_Click({ if ($dgvGallery.SelectedRows.Count -gt 0) { Invoke-DownloadPackage -Pkg $script:CurrentGalleryResults[$dgvGallery.SelectedRows[0].Index] } })
 $btnViewCode.Add_Click({ if ($dgvGallery.SelectedRows.Count -gt 0) { Invoke-InspectPackageCode -Pkg $script:CurrentGalleryResults[$dgvGallery.SelectedRows[0].Index] } })
-$btnOpenWeb.Add_Click({ if ($dgvGallery.SelectedRows.Count -gt 0) { Start-Process $script:CurrentGalleryResults[$dgvGallery.SelectedRows[0].Index].GalleryDetailsUrl } })
-$btnCopyCmd.Add_Click({
-    if ($dgvGallery.SelectedRows.Count -gt 0) {
-        $pkg = $script:CurrentGalleryResults[$dgvGallery.SelectedRows[0].Index]
-        $cmd = if ($pkg.Type -eq 'Script') { "Install-Script -Name '$($pkg.Id)' -Scope CurrentUser" } else { "Install-Module -Name '$($pkg.Id)' -Scope CurrentUser" }
-        [Windows.Forms.Clipboard]::SetText($cmd)
-        $lblStatus.Text = "Copied: $cmd"
+
+$btnTranslate.Add_Click({ Invoke-TranslatePackageDetails })
+
+$cmbTargetLang.Add_SelectedIndexChanged({
+    if ($script:IsShowingTranslation -and ($null -ne $script:CurrentDetailsPkg)) {
+        Invoke-TranslatePackageDetails -ForceTranslate
     }
 })
 

@@ -15,7 +15,7 @@ View the official package listing on **[PowerShell Gallery](https://www.powershe
 
 ### Discover & Install
 * **Search & Filter:** Browse the PowerShell Gallery by keyword, category, package type (Scripts or Modules), and sort order (**Most Downloaded**, **Recently Updated**, or **Name A-Z**).
-* **Exact Download Counts:** Hydrates accurate multi-version download totals across all sort modes so counts remain consistent regardless of how results are sorted.
+* **Exact Download Counts:** Fetches and caches cumulative multi-version download totals to populate search results, keeping download counts accurate and consistent regardless of how results are sorted.
 * **Inspect Source Code:** Preview a script's full source code before downloading or installing anything to your system.
 * **On-Demand Translation:** Translate package descriptions and release notes into 12 languages with automatic source-language detection and instant in-memory caching.
 * **One-Click Install or Direct Download:** Install packages for `CurrentUser` or `AllUsers`, or save copies directly to your configured `DefaultSavePath`.

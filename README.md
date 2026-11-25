@@ -1,27 +1,105 @@
-# PSGallery-Manager
+# PSGallery Manager
 
-A PowerShell utility (`PSGallery-Manager.ps1`) by **waresoft** for managing PowerShell Gallery workflows—including publishing scripts, unlisting versions, installing/uninstalling scripts locally, managing API keys, and creating desktop shortcuts for locally installed scripts.
+[![PowerShell Gallery Version](https://img.shields.io/powershellgallery/v/PSGallery-Manager?logo=powershell&label=PSGallery)](https://www.powershellgallery.com/packages/PSGallery-Manager)
+[![PowerShell Gallery Downloads](https://img.shields.io/powershellgallery/dt/PSGallery-Manager?logo=powershell&label=Downloads)](https://www.powershellgallery.com/packages/PSGallery-Manager)
+[![GitHub Release](https://img.shields.io/github/v/release/2civics/PSGallery-Manager?logo=github&label=GitHub)](https://github.com/2civics/PSGallery-Manager/releases)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20PowerShell%205.1%2B%20%2F%207%2B-0078D4?logo=windows)
 
-## Features
+A standalone Windows desktop GUI for browsing, installing, updating, translating, and publishing PowerShell Gallery scripts and modules—without memorizing cmdlets or manually editing metadata headers.
 
-- **Publish & Unlist on PowerShell Gallery:** Push scripts and handle version unlisting using your PowerShell Gallery API key.
-- **Local Script Lifecycle Management:** Install and uninstall scripts locally without getting tripped up by license prompts or multi-version uninstall edge cases.
-- **Desktop Shortcuts for Installed Scripts:** Create shortcuts for locally installed scripts (via UI controls such as a button, double-click, or context menu action).
-- **API Key & Scope Guidance:** Built-in reminders/shortcuts for API key management and scope requirements (including `403` permission/scope hints when publishing or unlisting).
-- **Preserves Existing Metadata:** Designed to handle script metadata cleanly without clobbering existing publisher fields.
+View the official package listing on **[PowerShell Gallery](https://www.powershellgallery.com/packages/PSGallery-Manager)**.
+
+---
+
+## Key Features
+
+### Discover & Install
+* **Search & Filter:** Browse the PowerShell Gallery by keyword, category, package type (Scripts or Modules), and sort order (**Most Downloaded**, **Recently Updated**, or **Name A-Z**).
+* **Exact Download Counts:** Hydrates accurate multi-version download totals across all sort modes so counts remain consistent regardless of how results are sorted.
+* **Inspect Source Code:** Preview a script's full source code before downloading or installing anything to your system.
+* **On-Demand Translation:** Translate package descriptions and release notes into 12 languages with automatic source-language detection and instant in-memory caching.
+* **One-Click Install or Direct Download:** Install packages for `CurrentUser` or `AllUsers`, or save copies directly to your configured `DefaultSavePath`.
+
+### My Gallery & Local Packages
+* **Published Package Tracking:** View all scripts and modules published under your PowerShell Gallery username alongside live download counts.
+* **Local Package Scanner:** Automatically detects scripts and modules installed on your PC, checks for newer versions on PowerShell Gallery, and lets you update or uninstall in one click.
+* **Right-Click Context Menu:** Right-click any installed module or script in the list for instant actions—create a desktop `.lnk` shortcut, inspect source code, update to the latest version, uninstall, open its install folder in File Explorer, or open it in an editor.
+
+### Publish to PowerShell Gallery
+* **Scripts & Modules:** Publish standalone `.ps1` scripts or module folders (`.psd1` / `.psm1`) with pre-publish validation and live Gallery version checks.
+* **Version Bumping & Metadata Injection:** Bump **Major**, **Minor**, or **Patch** versions in one click and automatically inject `<#PSScriptInfo>` or `.psd1` fields (including saved default Company Name and Copyright values).
+
+### Security, Shortcuts & Interface
+* **Windows DPAPI API Key Vault:** Encrypts your PowerShell Gallery API key locally under your Windows user profile (`CurrentUser`) so you never have to re-enter it.
+* **Desktop Shortcut Creator:** Built-in `.lnk` generator for any `.ps1` script with custom icons, hidden or normal window styles, execution policy bypass, and optional Administrator elevation.
+* **Adaptive Dark / Light Theme:** Automatically matches your Windows theme (with manual override) and runs in both Administrator and Standard user modes.
+
+---
 
 ## Requirements
 
-- **OS:** Windows 10 / Windows 11
-- **PowerShell:** Windows PowerShell 5.1 or PowerShell 7.x
-- **Network Access:** Outbound HTTPS access to the PowerShell Gallery (`powershellgallery.com`)
-- **Permissions:** Standard user for general operations; Administrator elevation may be required depending on target installation scope or shortcut paths
-- **API Key:** A valid PowerShell Gallery API key with the required scopes (`Publish` / package push and/or `Unlist` as needed)
+* **OS:** Windows 10 or Windows 11
+* **PowerShell:** Windows PowerShell 5.1 or PowerShell 7+
+* **Modules:** `PowerShellGet` and `PackageManagement` (included with Windows 10/11)
 
-## Installation
+---
 
-### Download from GitHub Releases
-1. Download `PSGallery-Manager.ps1` (or the release `.zip`) from the **Releases** page.
-2. Unblock the file if Windows marks it as downloaded from the web:
-   ```powershell
-   Unblock-File -Path .\PSGallery-Manager.ps1
+## Installation & Quick Start
+
+### Option 1: Install from PowerShell Gallery
+Install directly from your **[PowerShell Gallery listing](https://www.powershellgallery.com/packages/PSGallery-Manager)**:
+
+```powershell
+Install-Script -Name PSGallery-Manager -Scope CurrentUser
+PSGallery-Manager.ps1
+```
+
+### Option 2: Download from GitHub Releases
+1. Download `PSGallery-Manager.ps1` (or `PSGallery-Manager-v2.4.2.zip`) from the **[Releases page](https://github.com/2civics/PSGallery-Manager/releases)**.
+2. Run the script in PowerShell:
+
+```powershell
+.\PSGallery-Manager.ps1
+```
+
+To launch without prompting for Administrator elevation via UAC:
+
+```powershell
+.\PSGallery-Manager.ps1 -NoElevate
+```
+
+---
+
+## Tips & Keyboard / Mouse Shortcuts
+
+* **Right-Click Installed Packages:** In **My Gallery & Local Packages**, right-click any locally installed script or module to **Create Desktop Shortcut (.lnk)**, **Inspect Code**, **Update**, **Uninstall**, or **Open Install Folder**.
+* **Choose a Custom Download Folder on Demand:** Clicking **Download / Save** saves directly to your configured `DefaultSavePath`. Hold **Shift** while clicking **Download / Save** (or **Download Copy**) to pick a one-off destination folder.
+* **Toggle Translated Descriptions:** After clicking **Translate** in the Discover details pane, click **Show Original** at any time to switch back, or pick another target language from the dropdown to translate immediately.
+
+---
+
+## Troubleshooting
+
+* **PowerShell Gallery Slowness or Timeouts:** If searches, downloads, or publishes fail unexpectedly, check the official **[PowerShell Gallery Service Status](https://github.com/PowerShell/PowerShellGallery/blob/master/psgallery_status.md)** log for ongoing incidents or maintenance.
+* **TLS / NuGet Provider Errors on Older Systems:** Use the **Repair TLS / NuGet** button in the Publish tab to enforce TLS 1.2 and install/update the required NuGet provider for `CurrentUser`.
+
+---
+
+## Release History
+
+### v2.4.2
+* Added on-demand translation in the Discover Gallery details pane with a **Translate / Show Original** toggle button and a 12-language target selector (auto-detecting source language for descriptions and release notes).
+* Added in-memory translation caching per package version and target language so switching languages or revisiting packages loads instantly without redundant requests.
+* Enabled automatic height sizing on the Discover details action bar so wrapped button rows never clip at any window width or Windows DPI scaling level.
+
+### v2.4.1
+* Updated package downloads to save directly to `DefaultSavePath` by default instead of always prompting for a folder (`Shift+Click` still lets you choose a folder on demand).
+* Fixed `Import-PubTargetMetadata` so saved default Company Name and Copyright values pre-fill empty fields even when loading existing `.ps1` or `.psd1` files that already contain metadata blocks.
+* Fixed Discover Gallery details pane layout by dynamically sizing header labels for wrapped titles and moving Tags into the scrollable details box so the description area is never clipped or crowded out.
+* Fixed inconsistent download counts when switching Discover Gallery sort modes (**Most Downloaded**, **Recently Updated**, **Name A-Z**) by caching and hydrating exact `FindPackagesById()` totals across search pages.
+
+---
+
+## License
+
+Copyright (c) Danny Wareham (`waresoft` / `2civics`). All rights reserved.

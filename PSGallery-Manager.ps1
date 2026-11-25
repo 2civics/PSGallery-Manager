@@ -1,6 +1,6 @@
 ﻿<#PSScriptInfo
 
-.VERSION 2.4.0
+.VERSION 2.4.1
 
 .GUID 8f4e2b91-6c3a-4d7e-9b12-5a8f0c3d7e91
 
@@ -10,33 +10,41 @@
 
 .COPYRIGHT (c) 2026 waresoft. All rights reserved.
 
-.TAGS PowerShellGallery PSGallery GUI Scripts Modules Publisher ShortcutCreator DPAPI DarkMode
+.TAGS .TAGS PowerShellGallery PSGallery PowerShellGet PackageManagement GUI WinForms Windows Desktop Utility Automation DevOps Security Publish Publisher Scripts Modules ShortcutCreator DPAPI DarkMode
 
 .LICENSEURI https://opensource.org/licenses/MIT
 
 .PROJECTURI https://www.powershellgallery.com/packages/PSGallery-Manager/
 
 .RELEASENOTES
-v2.4.0:
-- Added accurate download count lookups across package versions via FindPackagesById() for published and discovered gallery items.
-- Fixed refreshing locally installed scripts and modules in 'Installed on This PC' without restarting the application.
+v2.4.1:
+- Updated package downloads to save directly to DefaultSavePath by default instead of always prompting for a folder (Shift+Click still lets you choose a folder on demand).
+- Fixed Import-PubTargetMetadata so saved default Company Name and Copyright values pre-fill empty fields even when loading existing .ps1 or .psd1 files that already contain metadata blocks.
+- Fixed Discover Gallery details pane layout by dynamically sizing header labels for wrapped titles and moving Tags into the scrollable details box so the description area is never clipped or crowded out.
+- Fixed inconsistent download counts when switching Discover Gallery sort modes (Most Downloaded, Recently Updated, Name A-Z) by caching and hydrating exact FindPackagesById() totals across search pages.
 
 #>
 
 <#
 .SYNOPSIS
-    All-in-one GUI suite for discovering, installing, publishing, and creating desktop shortcuts for PowerShell Gallery scripts and modules.
+    PSGallery Manager gives you a single desktop window to find, manage, and publish PowerShell Gallery packages without memorizing cmdlets or editing metadata headers by hand.
 
 .DESCRIPTION
-    Combines PowerShell Gallery category browsing and code inspection, local script/module update management, a full-featured PowerShell Gallery publisher with semantic version bumping and bidirectional metadata syncing, and a Windows Desktop Shortcut Creator with custom Shell icon picking and hidden window execution.
+    PSGallery Manager gives you a single desktop window to find, manage, and publish PowerShell Gallery packages without memorizing cmdlets or editing metadata headers by hand.
+
+        Key Features:
+        - Discover & Install: Search the PowerShell Gallery by keyword, category, or package type, inspect script source code before running anything, download copies straight to your save folder, or install packages for your account or the whole PC.
+        - My Gallery & Local Packages: View your published PowerShell Gallery packages with live download totals, scan scripts and modules installed on your PC, check for newer versions, and update or uninstall them in one click.
+        - Publish to PowerShell Gallery: Publish standalone .ps1 scripts or module folders (.psd1/.psm1) with one-click Major, Minor, or Patch version bumps, automatic metadata injection, and pre-publish validation.
+        - Encrypted API Key Storage: Protect your PowerShell Gallery API key locally with Windows DPAPI encryption so you never have to paste it repeatedly.
+        - Desktop Shortcut Creator: Create Windows .lnk shortcuts for any .ps1 script with custom icons, hidden or normal window modes, execution policy bypass, and optional Administrator elevation.
 
 
 
 
 
 
-.PARAMETER NoElevate
-    Prevents the application from requesting Administrator elevation via UAC on startup.
+.PARAMETER NoElevate Prevents the application from requesting Administrator elevation via UAC on startup.
 #>
 
 [CmdletBinding()]
@@ -1042,15 +1050,34 @@ $lblDetTitle = New-Object Windows.Forms.Label
 $lblDetTitle.Text = 'Select a package to view details'
 $lblDetTitle.Font = $fontSubHeader
 $lblDetTitle.Dock = 'Top'
-$lblDetTitle.Height = 28
+$lblDetTitle.Height = 30
+$lblDetTitle.Padding = New-Object Windows.Forms.Padding(0, 0, 0, 6)
 $pnlDetails.Controls.Add($lblDetTitle)
 
 $lblDetMeta = New-Object Windows.Forms.Label
 $lblDetMeta.Text = ''
 $lblDetMeta.Dock = 'Top'
-$lblDetMeta.Height = 64
+$lblDetMeta.Height = 72
+$lblDetMeta.Padding = New-Object Windows.Forms.Padding(0, 0, 0, 10)
 $pnlDetails.Controls.Add($lblDetMeta)
 $lblDetMeta.BringToFront()
+
+function Update-GalleryDetailsLayout {
+    if ($null -eq $pnlDetails -or $pnlDetails.IsDisposed) { return }
+    $panelW = if ($pnlDetails.ClientSize.Width -gt 40) { $pnlDetails.ClientSize.Width } else { 440 }
+    $availW = [Math]::Max(140, $panelW - $pnlDetails.Padding.Horizontal - 4)
+    $flags  = [System.Windows.Forms.TextFormatFlags]::WordBreak
+
+    $titleText = if ([string]::IsNullOrEmpty($lblDetTitle.Text)) { ' ' } else { $lblDetTitle.Text }
+    $titleSize = [System.Windows.Forms.TextRenderer]::MeasureText($titleText, $lblDetTitle.Font, (New-Object Drawing.Size($availW, 0)), $flags)
+    $lblDetTitle.Height = [Math]::Min(72, [Math]::Max(30, $titleSize.Height + 10))
+
+    $metaText = if ([string]::IsNullOrEmpty($lblDetMeta.Text)) { ' ' } else { $lblDetMeta.Text }
+    $metaSize = [System.Windows.Forms.TextRenderer]::MeasureText($metaText, $lblDetMeta.Font, (New-Object Drawing.Size($availW, 0)), $flags)
+    $lblDetMeta.Height = [Math]::Min(80, [Math]::Max(46, $metaSize.Height + 14))
+}
+
+$pnlDetails.Add_SizeChanged({ Update-GalleryDetailsLayout })
 
 $pnlDetActions = New-Object Windows.Forms.FlowLayoutPanel
 $pnlDetActions.Dock = 'Bottom'
@@ -2505,8 +2532,20 @@ function Import-PubTargetMetadata {
 
                 $verVal  = if ($parsedMeta.Version) { $parsedMeta.Version } elseif ($cmdVer) { $cmdVer } else { '1.0.0' }
                 $authVal = if ($parsedMeta.Author) { $parsedMeta.Author } elseif ($cmdAuth) { $cmdAuth } else { $script:Config.Username }
-                $compVal = if ($parsedMeta.CompanyName) { $parsedMeta.CompanyName } elseif ($cmdComp) { $cmdComp } else { '' }
-                $copyVal = if ($parsedMeta.Copyright) { $parsedMeta.Copyright } elseif ($cmdCopy) { $cmdCopy } else { '' }
+                $compVal = if (-not [string]::IsNullOrWhiteSpace($parsedMeta.CompanyName)) {
+                    $parsedMeta.CompanyName
+                } elseif (-not [string]::IsNullOrWhiteSpace($cmdComp)) {
+                    $cmdComp
+                } else {
+                    $script:Config.PubDefaultCompany
+                }
+                $copyVal = if (-not [string]::IsNullOrWhiteSpace($parsedMeta.Copyright)) {
+                    $parsedMeta.Copyright
+                } elseif (-not [string]::IsNullOrWhiteSpace($cmdCopy)) {
+                    $cmdCopy
+                } else {
+                    $script:Config.PubDefaultCopyright
+                }
                 $descVal = if ($parsedMeta.Description) { $parsedMeta.Description } elseif ($cmdDesc) { ($cmdDesc -replace '\r?\n', "`r`n").Trim() } else { '' }
                 $tagsArr = if (@($parsedMeta.Tags).Count -gt 0) { @($parsedMeta.Tags) } elseif ($cmdTags.Count -gt 0) { $cmdTags } else { @() }
                 $projVal = if ($parsedMeta.ProjectUri) { $parsedMeta.ProjectUri } elseif ($cmdProj) { $cmdProj } else { '' }
@@ -2573,8 +2612,20 @@ function Import-PubTargetMetadata {
 
                     $verVal  = if ($dVer) { $dVer } elseif ($iVer) { $iVer } else { '1.0.0' }
                     $authVal = if ($dAuth) { $dAuth } elseif ($iAuth) { $iAuth } else { $script:Config.Username }
-                    $compVal = if ($dComp) { $dComp } elseif ($iComp) { $iComp } else { '' }
-                    $copyVal = if ($dCopy) { $dCopy } elseif ($iCopy) { $iCopy } else { '' }
+                    $compVal = if (-not [string]::IsNullOrWhiteSpace($dComp)) {
+                        $dComp
+                    } elseif (-not [string]::IsNullOrWhiteSpace($iComp) -and $iComp -ne 'Unknown') {
+                        $iComp
+                    } else {
+                        $script:Config.PubDefaultCompany
+                    }
+                    $copyVal = if (-not [string]::IsNullOrWhiteSpace($dCopy)) {
+                        $dCopy
+                    } elseif (-not [string]::IsNullOrWhiteSpace($iCopy)) {
+                        $iCopy
+                    } else {
+                        $script:Config.PubDefaultCopyright
+                    }
                     $descVal = if ($dDesc) { ($dDesc -replace '\r?\n', "`r`n").Trim() } elseif ($iDesc) { ($iDesc -replace '\r?\n', "`r`n").Trim() } else { '' }
 
                     $dPriv  = Get-SafeProp -Obj $modData -Name 'PrivateData' -Default $null
@@ -3171,18 +3222,35 @@ function Invoke-InstallPackage {
 }
 
 function Invoke-DownloadPackage {
-    param([PSCustomObject]$Pkg)
+    param(
+        [PSCustomObject]$Pkg,
+        [switch]$ChooseFolder
+    )
     if ($null -eq $Pkg) { return }
-    $targetFolder = if ([string]::IsNullOrWhiteSpace($script:Config.DefaultSavePath)) { Join-Path $HOME 'Downloads\PSGallery' } else { $script:Config.DefaultSavePath }
 
-    $fbd = New-Object Windows.Forms.FolderBrowserDialog
-    $fbd.Description = "Choose destination folder to download $($Pkg.Id)"
-    if (Test-Path -LiteralPath $targetFolder) { $fbd.SelectedPath = $targetFolder }
-    if ($fbd.ShowDialog() -ne 'OK') { return }
+    $rawDefault = if ([string]::IsNullOrWhiteSpace($script:Config.DefaultSavePath)) {
+        Join-Path $HOME 'Downloads\PSGallery'
+    }
+    else {
+        [Environment]::ExpandEnvironmentVariables($script:Config.DefaultSavePath.Trim())
+    }
 
-    $dest = $fbd.SelectedPath
+    $dest      = $rawDefault
+    $askFolder = $ChooseFolder -or (([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Shift) -eq [System.Windows.Forms.Keys]::Shift)
+
+    if ($askFolder -or [string]::IsNullOrWhiteSpace($dest)) {
+        $fbd = New-Object Windows.Forms.FolderBrowserDialog
+        $fbd.Description = "Choose destination folder to download $($Pkg.Id)"
+        if (-not [string]::IsNullOrWhiteSpace($dest) -and (Test-Path -LiteralPath $dest)) {
+            $fbd.SelectedPath = $dest
+        }
+        if ($fbd.ShowDialog() -ne 'OK') { return }
+        $dest = $fbd.SelectedPath
+    }
+
     $lblStatus.Text = "Downloading $($Pkg.Type) '$($Pkg.Id)' to $dest..."
     $btnDownloadPkg.Enabled = $false
+    $btnPubDownload.Enabled = $false
 
     $work = {
         param($id, $type, $saveDir)
@@ -3214,7 +3282,8 @@ function Invoke-DownloadPackage {
 
     Invoke-AsyncTask -Work $work -ArgumentList @($Pkg.Id, $Pkg.Type, $dest) -State @{ Pkg = $Pkg; Dest = $dest } -OnComplete {
         param($res, $err, $state)
-        $btnDownloadPkg.Enabled = $true
+        $btnDownloadPkg.Enabled = ($dgvGallery.SelectedRows.Count -gt 0)
+        $btnPubDownload.Enabled = $true
         if ($err) {
             $lblStatus.Text = "Download failed: $err"
             [Windows.Forms.MessageBox]::Show("Download failed:`n$err", 'Download Error', 'OK', 'Error') | Out-Null
@@ -3229,9 +3298,16 @@ function Invoke-DownloadPackage {
     }
 }
 
+$script:SelectedGalleryPkgId = ''
+$script:DownloadCountCache   = @{}
+$script:SearchGeneration     = 0
+
 function Invoke-GallerySearch {
     param([int]$PageIndex = 0)
     $script:CurrentPage = [Math]::Max(0, $PageIndex)
+    $script:SearchGeneration++
+    $currentGen = $script:SearchGeneration
+
     $category = [string]$cmbCategory.SelectedItem
     $itemType = [string]$cmbItemType.SelectedItem
     $sortMode = [string]$cmbSort.SelectedItem
@@ -3261,13 +3337,16 @@ function Invoke-GallerySearch {
             $filters.Add("(substringof('$safeQ', tolower(Id)) or substringof('$safeQ', tolower(Description)) or substringof('$safeQ', tolower(Tags)))")
         }
         $orderBy = switch ($sort) { 'Recently Updated' { 'Published desc' } 'Name (A-Z)' { 'Id asc' } default { 'DownloadCount desc' } }
-        $uri = "https://www.powershellgallery.com/api/v2/Packages()?`$filter=$([uri]::EscapeDataString($filters -join ' and '))&`$orderby=$([uri]::EscapeDataString($orderBy))&`$top=$top&`$skip=$skipCount"
-        $resp = Invoke-RestMethod -Uri $uri -Method Get -TimeoutSec 25 -ErrorAction Stop
+        $uri     = "https://www.powershellgallery.com/api/v2/Packages()?`$filter=$([uri]::EscapeDataString($filters -join ' and '))&`$orderby=$([uri]::EscapeDataString($orderBy))&`$top=$top&`$skip=$skipCount"
+        $headers = @{ 'Cache-Control' = 'no-cache'; 'Pragma' = 'no-cache' }
+        $resp    = Invoke-RestMethod -Uri $uri -Method Get -Headers $headers -TimeoutSec 25 -ErrorAction Stop
         return @(ConvertFrom-GalleryFeed -RawResponse $resp)
     }
 
-    Invoke-AsyncTask -Work $work -ArgumentList @($category, $itemType, $sortMode, $queryTxt, $pageSize, $skip, $parserCode) -State @{ PageSize = $pageSize } -OnComplete {
+    Invoke-AsyncTask -Work $work -ArgumentList @($category, $itemType, $sortMode, $queryTxt, $pageSize, $skip, $parserCode) -State @{ PageSize = $pageSize; Gen = $currentGen; ParserCode = $parserCode } -OnComplete {
         param($res, $err, $state)
+        if ($state.Gen -ne $script:SearchGeneration) { return }
+
         $btnSearch.Enabled = $true
         $lblPage.Text = "Page $($script:CurrentPage + 1)"
         $btnPrevPage.Enabled = ($script:CurrentPage -gt 0)
@@ -3279,6 +3358,19 @@ function Invoke-GallerySearch {
         }
 
         $items = @($res | Where-Object { $null -ne $_ })
+        $uncachedIds = New-Object System.Collections.Generic.List[string]
+
+        foreach ($item in $items) {
+            if ($script:DownloadCountCache.ContainsKey($item.Id)) {
+                $cached = $script:DownloadCountCache[$item.Id]
+                $item.Downloads        = [long]$cached.TotalDownloads
+                $item.VersionDownloads = [long]$cached.LatestVersionDownloads
+            }
+            else {
+                [void]$uncachedIds.Add($item.Id)
+            }
+        }
+
         $script:CurrentGalleryResults = $items
         $btnNextPage.Enabled = ($items.Count -ge $state.PageSize)
 
@@ -3300,28 +3392,103 @@ function Invoke-GallerySearch {
         $lblStatus.Text = "Found $($items.Count) package(s) on Page $($script:CurrentPage + 1)."
         if ($items.Count -gt 0) { $dgvGallery.Rows[0].Selected = $true; Update-GalleryDetailsPane -Pkg $items[0] }
         else { Update-GalleryDetailsPane -Pkg $null }
+
+        # Sync exact FindPackagesById() counts for all uncached rows on this page so every sort order matches
+        if ($uncachedIds.Count -gt 0) {
+            $idBatch = @($uncachedIds)
+            $hydrateWork = {
+                param($ids, $parserScript)
+                . ([scriptblock]::Create($parserScript))
+                [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                $out = New-Object System.Collections.Generic.List[object]
+                $i = 0
+                foreach ($pkgId in $ids) {
+                    $stats = Get-AccuratePackageDownloads -PackageId $pkgId
+                    if ($null -ne $stats) {
+                        $out.Add([PSCustomObject]@{ Id = $pkgId; Stats = $stats })
+                    }
+                    $i++
+                    if (($i % 5) -eq 0) { Start-Sleep -Milliseconds 60 }
+                }
+                return @($out)
+            }
+
+            Invoke-AsyncTask -Work $hydrateWork -ArgumentList @(, $idBatch, $state.ParserCode) -State @{ Gen = $state.Gen } -OnComplete {
+                param($hRes, $hErr, $hState)
+                if ($hErr -or $null -eq $hRes -or ($hState.Gen -ne $script:SearchGeneration)) { return }
+
+                $byId = @{}
+                foreach ($entry in @($hRes | Where-Object { $null -ne $_ })) {
+                    if ($null -ne $entry.Stats) {
+                        $script:DownloadCountCache[$entry.Id] = $entry.Stats
+                        $byId[$entry.Id] = $entry.Stats
+                    }
+                }
+
+                foreach ($pkgObj in @($script:CurrentGalleryResults)) {
+                    if ($byId.ContainsKey($pkgObj.Id)) {
+                        $pkgObj.Downloads        = [long]$byId[$pkgObj.Id].TotalDownloads
+                        $pkgObj.VersionDownloads = [long]$byId[$pkgObj.Id].LatestVersionDownloads
+                    }
+                }
+
+                for ($r = 0; $r -lt $dgvGallery.Rows.Count; $r++) {
+                    $rowId = [string]$dgvGallery.Rows[$r].Cells['Id'].Value
+                    if ($byId.ContainsKey($rowId)) {
+                        $dgvGallery.Rows[$r].Cells['Downloads'].Value = ([long]$byId[$rowId].TotalDownloads).ToString('N0')
+                    }
+                }
+
+                if (-not [string]::IsNullOrWhiteSpace($script:SelectedGalleryPkgId) -and $byId.ContainsKey($script:SelectedGalleryPkgId)) {
+                    $selPkg = $script:CurrentGalleryResults | Where-Object { $_.Id -eq $script:SelectedGalleryPkgId } | Select-Object -First 1
+                    if ($null -ne $selPkg) {
+                        $verPart = if ($selPkg.VersionDownloads -gt 0) { " (v$($selPkg.Version): $($selPkg.VersionDownloads.ToString('N0')))" } else { '' }
+                        $lblDetMeta.Text = "Type: $($selPkg.Type)   |   Author: $($selPkg.Authors)`r`nDownloads: $($selPkg.Downloads.ToString('N0'))$verPart   |   Published: $($selPkg.Published)"
+                        if (Get-Command Update-GalleryDetailsLayout -ErrorAction SilentlyContinue) { Update-GalleryDetailsLayout }
+                    }
+                }
+            }
+        }
     }
 }
-
-
 
 function Update-GalleryDetailsPane {
     param([PSCustomObject]$Pkg)
     if ($null -eq $Pkg) {
         $script:SelectedGalleryPkgId = ''
         $lblDetTitle.Text = 'No package selected'; $lblDetMeta.Text = ''; $txtDetBody.Text = ''
+        if (Get-Command Update-GalleryDetailsLayout -ErrorAction SilentlyContinue) { Update-GalleryDetailsLayout }
         foreach ($b in @($btnInstallPkg, $btnDownloadPkg, $btnViewCode, $btnOpenWeb, $btnCopyCmd)) { $b.Enabled = $false }
         return
     }
+
     $script:SelectedGalleryPkgId = $Pkg.Id
+    $isCached = $script:DownloadCountCache.ContainsKey($Pkg.Id)
+    if ($isCached) {
+        $cached = $script:DownloadCountCache[$Pkg.Id]
+        $Pkg.Downloads        = [long]$cached.TotalDownloads
+        $Pkg.VersionDownloads = [long]$cached.LatestVersionDownloads
+    }
+
     $lblDetTitle.Text = "$($Pkg.Id)  (v$($Pkg.Version))"
-    $lblDetMeta.Text  = "Type: $($Pkg.Type)   |   Author: $($Pkg.Authors)`r`nDownloads: $($Pkg.Downloads.ToString('N0')) (loading exact...)   |   Published: $($Pkg.Published)`r`nTags: $($Pkg.Tags)"
+    if ($isCached) {
+        $verPart = if ($Pkg.VersionDownloads -gt 0) { " (v$($Pkg.Version): $($Pkg.VersionDownloads.ToString('N0')))" } else { '' }
+        $lblDetMeta.Text = "Type: $($Pkg.Type)   |   Author: $($Pkg.Authors)`r`nDownloads: $($Pkg.Downloads.ToString('N0'))$verPart   |   Published: $($Pkg.Published)"
+    }
+    else {
+        $lblDetMeta.Text = "Type: $($Pkg.Type)   |   Author: $($Pkg.Authors)`r`nDownloads: $($Pkg.Downloads.ToString('N0')) (loading exact...)   |   Published: $($Pkg.Published)"
+    }
+    if (Get-Command Update-GalleryDetailsLayout -ErrorAction SilentlyContinue) { Update-GalleryDetailsLayout }
+
     $body = New-Object System.Text.StringBuilder
     [void]$body.AppendLine("DESCRIPTION:`r`n$($Pkg.Description)")
     if (-not [string]::IsNullOrWhiteSpace($Pkg.ReleaseNotes)) { [void]$body.AppendLine("`r`nRELEASE NOTES:`r`n$($Pkg.ReleaseNotes)") }
     if (-not [string]::IsNullOrWhiteSpace($Pkg.ProjectUrl))   { [void]$body.AppendLine("`r`nPROJECT URL: $($Pkg.ProjectUrl)") }
+    if (-not [string]::IsNullOrWhiteSpace($Pkg.Tags))         { [void]$body.AppendLine("`r`nTAGS:`r`n$($Pkg.Tags)") }
     $txtDetBody.Text = $body.ToString()
     foreach ($b in @($btnInstallPkg, $btnDownloadPkg, $btnViewCode, $btnOpenWeb, $btnCopyCmd)) { $b.Enabled = $true }
+
+    if ($isCached) { return }
 
     $parserCode = $script:ODataParserBlock.ToString()
     $work = {
@@ -3337,6 +3504,7 @@ function Update-GalleryDetailsPane {
         $stats = $res | Select-Object -First 1
         if ($null -eq $stats) { return }
 
+        $script:DownloadCountCache[$state.Pkg.Id] = $stats
         $state.Pkg.Downloads        = [long]$stats.TotalDownloads
         $state.Pkg.VersionDownloads = [long]$stats.LatestVersionDownloads
 
@@ -3349,7 +3517,8 @@ function Update-GalleryDetailsPane {
 
         if ($script:SelectedGalleryPkgId -eq $state.Pkg.Id) {
             $verPart = if ($state.Pkg.VersionDownloads -gt 0) { " (v$($state.Pkg.Version): $($state.Pkg.VersionDownloads.ToString('N0')))" } else { '' }
-            $lblDetMeta.Text = "Type: $($state.Pkg.Type)   |   Author: $($state.Pkg.Authors)`r`nDownloads: $($state.Pkg.Downloads.ToString('N0'))$verPart   |   Published: $($state.Pkg.Published)`r`nTags: $($state.Pkg.Tags)"
+            $lblDetMeta.Text = "Type: $($state.Pkg.Type)   |   Author: $($state.Pkg.Authors)`r`nDownloads: $($state.Pkg.Downloads.ToString('N0'))$verPart   |   Published: $($state.Pkg.Published)"
+            if (Get-Command Update-GalleryDetailsLayout -ErrorAction SilentlyContinue) { Update-GalleryDetailsLayout }
         }
     }
 }

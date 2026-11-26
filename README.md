@@ -91,15 +91,15 @@ To launch without prompting for Administrator elevation via UAC:
 
 ### Fixed Cross-Edition Local Package Management
 
--Cross-Edition Local Package Management: Fixed updating and uninstalling installed scripts across Windows PowerShell 5.1 and PowerShell 7.x. Operations now automatically execute in the matching host (powershell.exe or pwsh.exe) regardless of which edition launched the GUI, with safe cleanup fallback for orphaned PS 7.x scripts if pwsh.exe is not installed.
--PS Ver Column & Scan Fix: Added a "PS Ver" column (PS 5.1 / PS 7.x) to the Installed on This PC grid and fixed a deduplication bug where installing the same script in both 5.1 and 7.x caused one entry to hide the other.
--Fixed PS 7.x Grid Header Highlight Bug: Explicitly set ColumnHeadersDefaultCellStyle SelectionBackColor and SelectionForeColor in Apply-Theme so the first column header ("Package Name" / "Name") no longer turns blue in PowerShell 7.x.
--Title Bar Version Display: Added the app version beside the title in the main window title bar, backed by an editable $script:AppVersion variable at the top of the script.
+* **Cross-Edition Local Package Management: Fixed updating and uninstalling installed scripts across Windows PowerShell 5.1 and PowerShell 7.x. Operations now automatically execute in the matching host (powershell.exe or pwsh.exe) regardless of which edition launched the GUI, with safe cleanup fallback for orphaned PS 7.x scripts if pwsh.exe is not installed.
+* **PS Ver Column & Scan Fix: Added a "PS Ver" column (PS 5.1 / PS 7.x) to the Installed on This PC grid and fixed a deduplication bug where installing the same script in both 5.1 and 7.x caused one entry to hide the other.
+* **Fixed PS 7.x Grid Header Highlight Bug: Explicitly set ColumnHeadersDefaultCellStyle SelectionBackColor and SelectionForeColor in Apply-Theme so the first column header ("Package Name" / "Name") no longer turns blue in PowerShell 7.x.
+* **Title Bar Version Display: Added the app version beside the title in the main window title bar, backed by an editable $script:AppVersion variable at the top of the script.
 
 ## What's New in v2.4.4
 
 ### Fixed PowerShell 5.1 Parser Error
--Fixed PowerShell 5.1 Parser Error: Replaced a UTF-8 em-dash (—) in an API key error message on line 4435 with an ASCII hyphen to prevent Windows PowerShell 5.1 from misreading the character as a closing quote (”) and breaking script parsing.
+* **Fixed PowerShell 5.1 Parser Error: Replaced a UTF-8 em-dash (—) in an API key error message on line 4435 with an ASCII hyphen to prevent Windows PowerShell 5.1 from misreading the character as a closing quote (”) and breaking script parsing.
 
 ## What's New in v2.4.3
 

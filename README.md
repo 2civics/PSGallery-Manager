@@ -87,6 +87,10 @@ To launch without prompting for Administrator elevation via UAC:
 
 ## Release History
 
+## What's New in v2.4.4
+
+* **Fixed PowerShell 5.1 Parser Error: Replaced a UTF-8 em-dash (—) in an API key error message on line 4435 with an ASCII hyphen to prevent Windows PowerShell 5.1 from misreading the character as a closing quote (”) and breaking script parsing.
+
 ## What's New in v2.4.3
 
 ### Dual PowerShell 5.1 & 7.x Runtime Support

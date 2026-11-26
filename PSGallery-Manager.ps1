@@ -1,6 +1,6 @@
 <#PSScriptInfo
 
-.VERSION 2.4.3
+.VERSION 2.4.4
 
 .GUID 8f4e2b91-6c3a-4d7e-9b12-5a8f0c3d7e91
 
@@ -17,11 +17,8 @@
 .PROJECTURI https://www.powershellgallery.com/packages/PSGallery-Manager/
 
 .RELEASENOTES
-v2.4.3:
-- Added full dual-runtime support for both Windows PowerShell 5.1 (powershell.exe) and PowerShell 7.x (pwsh.exe), including dynamic .NET assembly resolution for Win32/DWM helpers and runtime-aware -STA handling.
-- Updated UAC auto-elevation and the header Elevate button to preserve the active PowerShell 5.1 or 7.x host executable across Administrator relaunches.
-- Added a PowerShell Mode selector (PowerShell 5.1 vs. PowerShell 7.x) to the Desktop Shortcut Creator with live installation detection, automatic default icon switching, persistent mode preference, and a dedicated Windows Icons (shell32.dll) browser button.
-- Added guided automatic PowerShell 7 installation (via winget with GitHub MSI fallback) when creating a PowerShell 7.x shortcut on systems where pwsh.exe is not yet installed.
+v2.4.4:
+Fixed PowerShell 5.1 Parser Error: Replaced a UTF-8 em-dash (—) in an API key error message on line 4435 with an ASCII hyphen to prevent Windows PowerShell 5.1 from misreading the character as a closing quote (”) and breaking script parsing.
 
 #>
 
@@ -38,6 +35,9 @@ v2.4.3:
         - Publish to PowerShell Gallery: Publish standalone .ps1 scripts or module folders (.psd1/.psm1) with one-click Major, Minor, or Patch version bumps, automatic metadata injection, and pre-publish validation.
         - Encrypted API Key Storage: Protect your PowerShell Gallery API key locally with Windows DPAPI encryption so you never have to paste it repeatedly.
         - Desktop Shortcut Creator: Create Windows .lnk shortcuts for any .ps1 script with custom icons, hidden or normal window modes, execution policy bypass, and optional Administrator elevation.
+
+
+
 
 
 
@@ -4432,7 +4432,7 @@ $btnPubUnlist.Add_Click({
                              "Common Causes on PowerShell Gallery:`n" +
                              "1. Missing Scope: Your API key was created with 'Push' permission only and does not have 'Unlist packages' enabled.`n" +
                              "2. Package Restriction / Expiration: The key's Glob Pattern does not include '*' (all packages), or the key has expired.`n`n" +
-                             "Note: PowerShell Gallery does not allow editing scopes on existing keys—you must create a new key with 'Unlist packages' checked.`n`n" +
+                             "Note: PowerShell Gallery does not allow editing scopes on existing keys - you must create a new key with 'Unlist packages' checked.`n`n" +
                              "Open PowerShellGallery.com API Keys page in your browser now?"
                 if ([Windows.Forms.MessageBox]::Show($detailMsg, 'API Key Permission Error (403)', 'YesNo', 'Warning') -eq 'Yes') {
                     Start-Process 'https://www.powershellgallery.com/account/apikeys'

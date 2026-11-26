@@ -60,6 +60,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$script:AppVersion = '2.4.4'
+
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Security
@@ -825,7 +827,7 @@ $fontMono      = New-Object Drawing.Font('Consolas', 9.25)
 $toolTip = New-Object System.Windows.Forms.ToolTip
 
 $form = New-Object Windows.Forms.Form
-$form.Text = 'PowerShell Gallery Manager & Publisher'
+$form.Text = "PowerShell Gallery Manager & Publisher v$($script:AppVersion)"
 $form.Size = New-Object Drawing.Size(1280, 860)
 $form.MinimumSize = New-Object Drawing.Size(1120, 760)
 $form.StartPosition = 'CenterScreen'
@@ -3465,7 +3467,7 @@ function Apply-Theme {
         }
     }
 
-    foreach ($dgv in @($dgvGallery, $dgvPublished, $dgvLocal)) {
+   foreach ($dgv in @($dgvGallery, $dgvPublished, $dgvLocal)) {
         $dgv.BackgroundColor = $p.BgGrid
         $dgv.GridColor = $p.Border
         $dgv.DefaultCellStyle.BackColor = $p.BgGrid
@@ -3476,6 +3478,8 @@ function Apply-Theme {
         $dgv.AlternatingRowsDefaultCellStyle.ForeColor = $p.FgPrimary
         $dgv.ColumnHeadersDefaultCellStyle.BackColor = $p.BgGridHeader
         $dgv.ColumnHeadersDefaultCellStyle.ForeColor = $p.FgPrimary
+        $dgv.ColumnHeadersDefaultCellStyle.SelectionBackColor = $p.BgGridHeader
+        $dgv.ColumnHeadersDefaultCellStyle.SelectionForeColor = $p.FgPrimary
         $dgv.ColumnHeadersDefaultCellStyle.Font = $fontUiBold
     }
 
@@ -4185,6 +4189,28 @@ function Invoke-LoadPublishedPackages {
     }
 }
 
+function Get-PSPackageEditionFromPath {
+    param(
+        [string]$Path,
+        [string]$DefaultEdition = $(if ($PSVersionTable.PSEdition -eq 'Core') { 'PS 7.x' } else { 'PS 5.1' })
+    )
+    if ($Path -match '(^|\\)WindowsPowerShell(\\Scripts|\\Modules|$)') { return 'PS 5.1' }
+    if ($Path -match '(^|\\)PowerShell(\\Scripts|\\Modules|$)') { return 'PS 7.x' }
+    return $DefaultEdition
+}
+
+function Get-TargetHostExecutableForEdition {
+    param([Parameter(Mandatory)][string]$Edition)
+    if ($Edition -eq 'PS 5.1') {
+        return (Join-Path -Path $env:SystemRoot -ChildPath 'System32\WindowsPowerShell\v1.0\powershell.exe')
+    }
+    $pwshInfo = Get-Pwsh7Info
+    if ($null -ne $pwshInfo -and -not [string]::IsNullOrWhiteSpace($pwshInfo.ExePath)) {
+        return $pwshInfo.ExePath
+    }
+    return $null
+}
+
 function Invoke-ScanLocalPackages {
     $lblStatus.Text = 'Scanning locally installed PowerShell scripts and modules...'
     $btnScanLocal.Enabled = $false
@@ -4193,19 +4219,29 @@ function Invoke-ScanLocalPackages {
         $ErrorActionPreference = 'SilentlyContinue'
         Import-Module PowerShellGet -Force -ErrorAction SilentlyContinue
 
+        $currentEd = if ($PSVersionTable.PSEdition -eq 'Core') { 'PS 7.x' } else { 'PS 5.1' }
+        function Get-EditionFromLoc {
+            param([string]$Loc)
+            if ($Loc -match '(^|\\)WindowsPowerShell(\\Scripts|\\Modules|$)') { return 'PS 5.1' }
+            if ($Loc -match '(^|\\)PowerShell(\\Scripts|\\Modules|$)') { return 'PS 7.x' }
+            return $currentEd
+        }
+
         $results = New-Object System.Collections.Generic.List[object]
         $seen    = @{}
 
         if (Get-Command Get-InstalledScript -ErrorAction SilentlyContinue) {
             foreach ($s in @(Get-InstalledScript -ErrorAction SilentlyContinue)) {
                 if ($null -eq $s -or [string]::IsNullOrWhiteSpace($s.Name)) { continue }
-                $scope = if ($s.InstalledLocation -like "$env:ProgramFiles*") { 'AllUsers' } else { 'CurrentUser' }
-                $key   = "Script|$($s.Name.ToLowerInvariant())|$scope"
+                $scope   = if ($s.InstalledLocation -like "$env:ProgramFiles*") { 'AllUsers' } else { 'CurrentUser' }
+                $edition = Get-EditionFromLoc -Loc $s.InstalledLocation
+                $key     = "Script|$edition|$($s.Name.ToLowerInvariant())|$scope"
                 if (-not $seen.ContainsKey($key)) {
                     $seen[$key] = $true
                     $results.Add([PSCustomObject]@{
                         Name             = $s.Name
                         Type             = 'Script'
+                        Edition          = $edition
                         InstalledVersion = [string]$s.Version
                         LatestVersion    = ''
                         Status           = 'Installed'
@@ -4216,12 +4252,12 @@ function Invoke-ScanLocalPackages {
             }
         }
 
-        # Fallback XML scan to catch newly installed scripts when PowerShellGet caches session state
+        # Scan both Windows PowerShell 5.1 and PowerShell 7.x script folders
         $scriptRoots = @(
-            @{ Path = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'WindowsPowerShell\Scripts'); Scope = 'CurrentUser' },
-            @{ Path = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell\Scripts');        Scope = 'CurrentUser' },
-            @{ Path = (Join-Path $env:ProgramFiles 'WindowsPowerShell\Scripts');                             Scope = 'AllUsers' },
-            @{ Path = (Join-Path $env:ProgramFiles 'PowerShell\Scripts');                                    Scope = 'AllUsers' }
+            @{ Path = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'WindowsPowerShell\Scripts'); Scope = 'CurrentUser'; Edition = 'PS 5.1' },
+            @{ Path = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell\Scripts');        Scope = 'CurrentUser'; Edition = 'PS 7.x' },
+            @{ Path = (Join-Path $env:ProgramFiles 'WindowsPowerShell\Scripts');                             Scope = 'AllUsers';    Edition = 'PS 5.1' },
+            @{ Path = (Join-Path $env:ProgramFiles 'PowerShell\Scripts');                                    Scope = 'AllUsers';    Edition = 'PS 7.x' }
         )
         foreach ($root in $scriptRoots) {
             $infoDir = Join-Path $root.Path 'InstalledScriptInfos'
@@ -4233,12 +4269,13 @@ function Invoke-ScanLocalPackages {
                         $sVer    = [string]$infoObj.Version
                         $sLoc    = if ($infoObj.InstalledLocation) { [string]$infoObj.InstalledLocation } else { $root.Path }
                         if ([string]::IsNullOrWhiteSpace($sName)) { continue }
-                        $key = "Script|$($sName.ToLowerInvariant())|$($root.Scope)"
+                        $key = "Script|$($root.Edition)|$($sName.ToLowerInvariant())|$($root.Scope)"
                         if (-not $seen.ContainsKey($key) -and (Test-Path -LiteralPath (Join-Path $sLoc "$sName.ps1") -PathType Leaf)) {
                             $seen[$key] = $true
                             $results.Add([PSCustomObject]@{
                                 Name             = $sName
                                 Type             = 'Script'
+                                Edition          = $root.Edition
                                 InstalledVersion = $sVer
                                 LatestVersion    = ''
                                 Status           = 'Installed'
@@ -4255,13 +4292,15 @@ function Invoke-ScanLocalPackages {
         if (Get-Command Get-InstalledModule -ErrorAction SilentlyContinue) {
             foreach ($m in @(Get-InstalledModule -ErrorAction SilentlyContinue)) {
                 if ($null -eq $m -or [string]::IsNullOrWhiteSpace($m.Name)) { continue }
-                $scope = if ($m.InstalledLocation -like "$env:ProgramFiles*") { 'AllUsers' } else { 'CurrentUser' }
-                $key   = "Module|$($m.Name.ToLowerInvariant())|$scope"
+                $scope   = if ($m.InstalledLocation -like "$env:ProgramFiles*") { 'AllUsers' } else { 'CurrentUser' }
+                $edition = Get-EditionFromLoc -Loc $m.InstalledLocation
+                $key     = "Module|$edition|$($m.Name.ToLowerInvariant())|$scope"
                 if (-not $seen.ContainsKey($key)) {
                     $seen[$key] = $true
                     $results.Add([PSCustomObject]@{
                         Name             = $m.Name
                         Type             = 'Module'
+                        Edition          = $edition
                         InstalledVersion = [string]$m.Version
                         LatestVersion    = ''
                         Status           = 'Installed'
@@ -4272,7 +4311,7 @@ function Invoke-ScanLocalPackages {
             }
         }
 
-        return @($results | Sort-Object Type, Name)
+        return @($results | Sort-Object Type, Name, Edition)
     }
 
     Invoke-AsyncTask -Work $work -OnComplete {
@@ -4288,11 +4327,28 @@ function Invoke-ScanLocalPackages {
 function Render-LocalGrid {
     param([object[]]$Items)
     $dgvLocal.Columns.Clear(); $dgvLocal.Rows.Clear()
-    [void]$dgvLocal.Columns.Add('Name', 'Name'); [void]$dgvLocal.Columns.Add('Type', 'Type'); [void]$dgvLocal.Columns.Add('InstalledVersion', 'Installed')
-    [void]$dgvLocal.Columns.Add('LatestVersion', 'Gallery Latest'); [void]$dgvLocal.Columns.Add('Status', 'Status'); [void]$dgvLocal.Columns.Add('Scope', 'Scope'); [void]$dgvLocal.Columns.Add('Location', 'Install Path')
-    $dgvLocal.Columns['Name'].FillWeight = 22; $dgvLocal.Columns['Type'].FillWeight = 9; $dgvLocal.Columns['InstalledVersion'].FillWeight = 11
-    $dgvLocal.Columns['LatestVersion'].FillWeight = 11; $dgvLocal.Columns['Status'].FillWeight = 14; $dgvLocal.Columns['Scope'].FillWeight = 10; $dgvLocal.Columns['Location'].FillWeight = 23
-    foreach ($item in $Items) { [void]$dgvLocal.Rows.Add($item.Name, $item.Type, $item.InstalledVersion, $item.LatestVersion, $item.Status, $item.Scope, $item.Location) }
+    [void]$dgvLocal.Columns.Add('Name', 'Name')
+    [void]$dgvLocal.Columns.Add('Type', 'Type')
+    [void]$dgvLocal.Columns.Add('Edition', 'PS Ver')
+    [void]$dgvLocal.Columns.Add('InstalledVersion', 'Installed')
+    [void]$dgvLocal.Columns.Add('LatestVersion', 'Gallery Latest')
+    [void]$dgvLocal.Columns.Add('Status', 'Status')
+    [void]$dgvLocal.Columns.Add('Scope', 'Scope')
+    [void]$dgvLocal.Columns.Add('Location', 'Install Path')
+
+    $dgvLocal.Columns['Name'].FillWeight             = 21
+    $dgvLocal.Columns['Type'].FillWeight             = 8
+    $dgvLocal.Columns['Edition'].FillWeight          = 8
+    $dgvLocal.Columns['InstalledVersion'].FillWeight = 10
+    $dgvLocal.Columns['LatestVersion'].FillWeight    = 11
+    $dgvLocal.Columns['Status'].FillWeight           = 13
+    $dgvLocal.Columns['Scope'].FillWeight            = 10
+    $dgvLocal.Columns['Location'].FillWeight         = 19
+
+    foreach ($item in $Items) {
+        $ed = if ($item.PSObject.Properties.Name -contains 'Edition') { $item.Edition } else { '' }
+        [void]$dgvLocal.Rows.Add($item.Name, $item.Type, $ed, $item.InstalledVersion, $item.LatestVersion, $item.Status, $item.Scope, $item.Location)
+    }
 }
 
 function Invoke-LocalCreateShortcut {
@@ -4471,7 +4527,17 @@ $btnCheckUpdates.Add_Click({
                 else { $status = 'Not on Gallery' }
             }
             catch { $status = 'Check Failed' }
-            [PSCustomObject]@{ Name = $item.Name; Type = $item.Type; InstalledVersion = $item.InstalledVersion; LatestVersion = $latest; Status = $status; Scope = $item.Scope; Location = $item.Location }
+            $ed = if ($item.PSObject.Properties.Name -contains 'Edition') { $item.Edition } else { '' }
+            [PSCustomObject]@{
+                Name             = $item.Name
+                Type             = $item.Type
+                Edition          = $ed
+                InstalledVersion = $item.InstalledVersion
+                LatestVersion    = $latest
+                Status           = $status
+                Scope            = $item.Scope
+                Location         = $item.Location
+            }
         }
         return @($updated)
     }
@@ -4488,33 +4554,140 @@ $btnCheckUpdates.Add_Click({
 
 $btnUpdateLocal.Add_Click({
     if ($dgvLocal.SelectedRows.Count -eq 0) { return }
-    $item = $script:CurrentLocalResults[$dgvLocal.SelectedRows[0].Index]
+    $idx = $dgvLocal.SelectedRows[0].Index
+    if ($idx -lt 0 -or $idx -ge $script:CurrentLocalResults.Count) { return }
+    $item = $script:CurrentLocalResults[$idx]
+
     if ($item.Scope -eq 'AllUsers' -and (-not $script:IsAdmin)) {
-        [Windows.Forms.MessageBox]::Show("'$($item.Name)' is installed in AllUsers scope. Click 'Elevate' in the top bar first.", 'Admin Required', 'OK', 'Warning') | Out-Null; return
+        [Windows.Forms.MessageBox]::Show("'$($item.Name)' is installed in AllUsers scope. Click 'Elevate' in the top bar first.", 'Admin Required', 'OK', 'Warning') | Out-Null
+        return
     }
-    $lblStatus.Text = "Updating $($item.Type) '$($item.Name)'..."
+
+    $currentEdition = if ($PSVersionTable.PSEdition -eq 'Core') { 'PS 7.x' } else { 'PS 5.1' }
+    $hasEditionProp = ($item.PSObject.Properties.Name -contains 'Edition') -and (-not [string]::IsNullOrWhiteSpace($item.Edition))
+    $targetEdition  = if ($hasEditionProp) { [string]$item.Edition } else { Get-PSPackageEditionFromPath -Path $item.Location -DefaultEdition $currentEdition }
+
+    $targetExe = ''
+    if ($targetEdition -ne $currentEdition) {
+        $targetExe = Get-TargetHostExecutableForEdition -Edition $targetEdition
+        if ([string]::IsNullOrWhiteSpace($targetExe) -or -not (Test-Path -LiteralPath $targetExe -PathType Leaf)) {
+            [Windows.Forms.MessageBox]::Show(
+                "Cannot update '$($item.Name)' because it is installed for $targetEdition, and the $targetEdition executable was not found on this PC.",
+                "$targetEdition Not Found",
+                'OK',
+                'Warning'
+            ) | Out-Null
+            return
+        }
+    }
+
+    $lblStatus.Text = "Updating $($item.Type) '$($item.Name)' ($targetEdition)..."
     $work = {
-        param($name, $type)
-        $ConfirmPreference = 'None'; $ProgressPreference = 'SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        if ($type -eq 'Script') {
-            $updParams = @{ Name = $name; Force = $true; ErrorAction = 'Stop' }
-            $cmdMeta = Get-Command Update-Script -ErrorAction SilentlyContinue
-            if ($null -ne $cmdMeta -and $cmdMeta.Parameters.ContainsKey('AcceptLicense')) {
-                $updParams['AcceptLicense'] = $true
+        param($name, $type, $scope, $location, $edition, $hostExe)
+
+        $coreUpdateScript = @'
+param([string]$Name, [string]$Type, [string]$Scope, [string]$Location)
+$ErrorActionPreference = 'Stop'
+$ConfirmPreference     = 'None'
+$ProgressPreference    = 'SilentlyContinue'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+Import-Module PowerShellGet -Force -ErrorAction SilentlyContinue
+
+if (-not (Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue | Where-Object { $_.Version -ge [version]'2.8.5.201' })) {
+    Install-PackageProvider -Name NuGet -MinimumVersion '2.8.5.201' -Force -Scope CurrentUser -ErrorAction Stop | Out-Null
+}
+
+if ($Type -eq 'Script') {
+    $installed = @(Get-InstalledScript -Name $Name -ErrorAction SilentlyContinue | Where-Object {
+        [string]::IsNullOrWhiteSpace($Location) -or ($_.InstalledLocation -ieq $Location)
+    })
+    if ($installed.Count -gt 0) {
+        $updParams = @{ Name = $Name; Force = $true; ErrorAction = 'Stop' }
+        $cmdMeta = Get-Command Update-Script -ErrorAction SilentlyContinue
+        if ($null -ne $cmdMeta -and $cmdMeta.Parameters.ContainsKey('AcceptLicense')) {
+            $updParams['AcceptLicense'] = $true
+        }
+        Update-Script @updParams
+        return
+    }
+
+    if (Get-Command Update-PSResource -ErrorAction SilentlyContinue) {
+        $psRes = @(Get-InstalledPSResource -Name $Name -Scope $Scope -ErrorAction SilentlyContinue)
+        if ($psRes.Count -gt 0) {
+            $resParams = @{ Name = $Name; Scope = $Scope; TrustRepository = $true; Quiet = $true; ErrorAction = 'Stop' }
+            $resMeta = Get-Command Update-PSResource -ErrorAction SilentlyContinue
+            if ($null -ne $resMeta -and $resMeta.Parameters.ContainsKey('AcceptLicense')) {
+                $resParams['AcceptLicense'] = $true
             }
-            Update-Script @updParams
+            Update-PSResource @resParams
+            return
+        }
+    }
+
+    $instParams = @{ Name = $Name; Scope = $Scope; Force = $true; ErrorAction = 'Stop' }
+    $instMeta = Get-Command Install-Script -ErrorAction SilentlyContinue
+    if ($null -ne $instMeta -and $instMeta.Parameters.ContainsKey('AcceptLicense')) {
+        $instParams['AcceptLicense'] = $true
+    }
+    Install-Script @instParams
+}
+else {
+    $updParams = @{ Name = $Name; Force = $true; ErrorAction = 'Stop' }
+    $cmdMeta = Get-Command Update-Module -ErrorAction SilentlyContinue
+    if ($null -ne $cmdMeta -and $cmdMeta.Parameters.ContainsKey('AcceptLicense')) {
+        $updParams['AcceptLicense'] = $true
+    }
+    Update-Module @updParams
+}
+'@
+
+        if ([string]::IsNullOrWhiteSpace($hostExe)) {
+            & ([scriptblock]::Create($coreUpdateScript)) $name $type $scope $location
         }
         else {
-            $updParams = @{ Name = $name; Force = $true; ErrorAction = 'Stop' }
-            $cmdMeta = Get-Command Update-Module -ErrorAction SilentlyContinue
-            if ($null -ne $cmdMeta -and $cmdMeta.Parameters.ContainsKey('AcceptLicense')) {
-                $updParams['AcceptLicense'] = $true
+            $safeName  = $name.Replace("'", "''")
+            $safeType  = $type.Replace("'", "''")
+            $safeScope = $scope.Replace("'", "''")
+            $safeLoc   = $location.Replace("'", "''")
+
+            $childScript = @"
+try {
+    & {
+$coreUpdateScript
+    } '$safeName' '$safeType' '$safeScope' '$safeLoc'
+    exit 0
+}
+catch {
+    [Console]::Error.WriteLine(`$_.Exception.Message)
+    exit 1
+}
+"@
+            $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($childScript))
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName               = $hostExe
+            $psi.Arguments              = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded"
+            $psi.UseShellExecute        = $false
+            $psi.CreateNoWindow         = $true
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError  = $true
+
+            $proc = [System.Diagnostics.Process]::Start($psi)
+            $outTask = $proc.StandardOutput.ReadToEndAsync()
+            $errTask = $proc.StandardError.ReadToEndAsync()
+            $proc.WaitForExit()
+            $stdOut = $outTask.GetAwaiter().GetResult()
+            $stdErr = $errTask.GetAwaiter().GetResult()
+
+            if ($proc.ExitCode -ne 0) {
+                $errDetail = if (-not [string]::IsNullOrWhiteSpace($stdErr)) { $stdErr.Trim() } elseif (-not [string]::IsNullOrWhiteSpace($stdOut)) { $stdOut.Trim() } else { "Target $edition host exited with code $($proc.ExitCode)." }
+                throw $errDetail
             }
-            Update-Module @updParams
         }
-        return "Updated $type '$name'."
+
+        return "Updated $type '$name' ($edition)."
     }
-    Invoke-AsyncTask -Work $work -ArgumentList @($item.Name, $item.Type) -OnComplete {
+
+    Invoke-AsyncTask -Work $work -ArgumentList @($item.Name, $item.Type, $item.Scope, $item.Location, $targetEdition, $targetExe) -OnComplete {
         param($res, $err, $state)
         if ($err) { $lblStatus.Text = "Update failed: $err"; [Windows.Forms.MessageBox]::Show("Update failed:`n$err", 'Error', 'OK', 'Error') | Out-Null }
         else { $lblStatus.Text = ($res | Out-String).Trim(); Invoke-ScanLocalPackages }
@@ -4523,34 +4696,170 @@ $btnUpdateLocal.Add_Click({
 
 $btnUninstallLocal.Add_Click({
     if ($dgvLocal.SelectedRows.Count -eq 0) { return }
-    $item = $script:CurrentLocalResults[$dgvLocal.SelectedRows[0].Index]
+    $idx = $dgvLocal.SelectedRows[0].Index
+    if ($idx -lt 0 -or $idx -ge $script:CurrentLocalResults.Count) { return }
+    $item = $script:CurrentLocalResults[$idx]
+
     if ($item.Scope -eq 'AllUsers' -and (-not $script:IsAdmin)) {
-        [Windows.Forms.MessageBox]::Show("'$($item.Name)' is installed in AllUsers scope. Click 'Elevate' in the top bar first.", 'Admin Required', 'OK', 'Warning') | Out-Null; return
+        [Windows.Forms.MessageBox]::Show("'$($item.Name)' is installed in AllUsers scope. Click 'Elevate' in the top bar first.", 'Admin Required', 'OK', 'Warning') | Out-Null
+        return
     }
-    if ([Windows.Forms.MessageBox]::Show("Uninstall $($item.Type) '$($item.Name)' (v$($item.InstalledVersion))?", 'Confirm Uninstall', 'YesNo', 'Warning') -ne 'Yes') { return }
-    $lblStatus.Text = "Uninstalling $($item.Type) '$($item.Name)'..."
-    $work = {
-        param($name, $type)
-        $ConfirmPreference = 'None'
-        if ($type -eq 'Script') {
-            $uninstParams = @{ Name = $name; Force = $true; ErrorAction = 'Stop' }
-            $cmdMeta = Get-Command Uninstall-Script -ErrorAction SilentlyContinue
-            if ($null -ne $cmdMeta -and $cmdMeta.Parameters.ContainsKey('AllVersions')) {
-                $uninstParams['AllVersions'] = $true
+
+    $currentEdition = if ($PSVersionTable.PSEdition -eq 'Core') { 'PS 7.x' } else { 'PS 5.1' }
+    $hasEditionProp = ($item.PSObject.Properties.Name -contains 'Edition') -and (-not [string]::IsNullOrWhiteSpace($item.Edition))
+    $targetEdition  = if ($hasEditionProp) { [string]$item.Edition } else { Get-PSPackageEditionFromPath -Path $item.Location -DefaultEdition $currentEdition }
+
+    $targetExe = ''
+    if ($targetEdition -ne $currentEdition) {
+        $targetExe = Get-TargetHostExecutableForEdition -Edition $targetEdition
+        if ([string]::IsNullOrWhiteSpace($targetExe) -or -not (Test-Path -LiteralPath $targetExe -PathType Leaf)) {
+            if ($item.Type -eq 'Script') {
+                $orphanAsk = [Windows.Forms.MessageBox]::Show(
+                    "$targetEdition is not installed on this PC, so '$($item.Name)' cannot be uninstalled via $targetEdition.`n`nRemove the orphaned script file and metadata directly from:`n$($item.Location)?",
+                    "$targetEdition Not Found",
+                    'YesNo',
+                    'Warning'
+                )
+                if ($orphanAsk -eq 'Yes') {
+                    try {
+                        $sf = Join-Path -Path $item.Location -ChildPath "$($item.Name).ps1"
+                        $xf = Join-Path -Path (Join-Path -Path $item.Location -ChildPath 'InstalledScriptInfos') -ChildPath "$($item.Name)_InstalledScriptInfo.xml"
+                        if (Test-Path -LiteralPath $sf -PathType Leaf) { Remove-Item -LiteralPath $sf -Force -ErrorAction Stop }
+                        if (Test-Path -LiteralPath $xf -PathType Leaf) { Remove-Item -LiteralPath $xf -Force -ErrorAction Stop }
+                        $lblStatus.Text = "Removed orphaned $targetEdition script '$($item.Name)'."
+                        Invoke-ScanLocalPackages
+                    }
+                    catch {
+                        $lblStatus.Text = "Uninstall failed: $($_.Exception.Message)"
+                        [Windows.Forms.MessageBox]::Show("Failed to remove orphaned files:`n$($_.Exception.Message)", 'Error', 'OK', 'Error') | Out-Null
+                    }
+                }
             }
-            Uninstall-Script @uninstParams
+            else {
+                [Windows.Forms.MessageBox]::Show(
+                    "Cannot uninstall '$($item.Name)' because it is installed for $targetEdition, and the $targetEdition executable was not found on this PC.",
+                    "$targetEdition Not Found",
+                    'OK',
+                    'Warning'
+                ) | Out-Null
+            }
+            return
+        }
+    }
+
+    if ([Windows.Forms.MessageBox]::Show("Uninstall $($item.Type) '$($item.Name)' (v$($item.InstalledVersion), $targetEdition)?", 'Confirm Uninstall', 'YesNo', 'Warning') -ne 'Yes') { return }
+    $lblStatus.Text = "Uninstalling $($item.Type) '$($item.Name)' ($targetEdition)..."
+
+    $work = {
+        param($name, $type, $scope, $location, $edition, $hostExe)
+
+        $coreUninstallScript = @'
+param([string]$Name, [string]$Type, [string]$Scope, [string]$Location)
+$ErrorActionPreference = 'Stop'
+$ConfirmPreference     = 'None'
+$ProgressPreference    = 'SilentlyContinue'
+Import-Module PowerShellGet -Force -ErrorAction SilentlyContinue
+
+if ($Type -eq 'Script') {
+    $matched = @(Get-InstalledScript -Name $Name -ErrorAction SilentlyContinue | Where-Object {
+        [string]::IsNullOrWhiteSpace($Location) -or ($_.InstalledLocation -ieq $Location)
+    })
+    if ($matched.Count -gt 0) {
+        $matched | Uninstall-Script -Force -ErrorAction Stop
+        return
+    }
+
+    if (Get-Command Uninstall-PSResource -ErrorAction SilentlyContinue) {
+        $psRes = @(Get-InstalledPSResource -Name $Name -Scope $Scope -ErrorAction SilentlyContinue)
+        if ($psRes.Count -gt 0) {
+            Uninstall-PSResource -Name $Name -Scope $Scope -ErrorAction Stop
+            return
+        }
+    }
+
+    $scriptFile = Join-Path -Path $Location -ChildPath "$Name.ps1"
+    $infoFile   = Join-Path -Path (Join-Path -Path $Location -ChildPath 'InstalledScriptInfos') -ChildPath "${Name}_InstalledScriptInfo.xml"
+    $removedAny = $false
+    if (Test-Path -LiteralPath $scriptFile -PathType Leaf) {
+        Remove-Item -LiteralPath $scriptFile -Force -ErrorAction Stop
+        $removedAny = $true
+    }
+    if (Test-Path -LiteralPath $infoFile -PathType Leaf) {
+        Remove-Item -LiteralPath $infoFile -Force -ErrorAction Stop
+        $removedAny = $true
+    }
+    if (-not $removedAny) {
+        throw "Script '$Name' was not found at '$Location'."
+    }
+}
+else {
+    $matched = @(Get-InstalledModule -Name $Name -AllVersions -ErrorAction SilentlyContinue | Where-Object {
+        [string]::IsNullOrWhiteSpace($Location) -or
+        ($_.InstalledLocation -ieq $Location) -or
+        ($_.InstalledLocation -like "$Location\*") -or
+        ($Location -like "$($_.InstalledLocation)\*")
+    })
+    if ($matched.Count -gt 0) {
+        $matched | Uninstall-Module -Force -ErrorAction Stop
+        return
+    }
+
+    $uninstParams = @{ Name = $Name; Force = $true; ErrorAction = 'Stop' }
+    $cmdMeta = Get-Command Uninstall-Module -ErrorAction SilentlyContinue
+    if ($null -ne $cmdMeta -and $cmdMeta.Parameters.ContainsKey('AllVersions')) {
+        $uninstParams['AllVersions'] = $true
+    }
+    Uninstall-Module @uninstParams
+}
+'@
+
+        if ([string]::IsNullOrWhiteSpace($hostExe)) {
+            & ([scriptblock]::Create($coreUninstallScript)) $name $type $scope $location
         }
         else {
-            $uninstParams = @{ Name = $name; Force = $true; ErrorAction = 'Stop' }
-            $cmdMeta = Get-Command Uninstall-Module -ErrorAction SilentlyContinue
-            if ($null -ne $cmdMeta -and $cmdMeta.Parameters.ContainsKey('AllVersions')) {
-                $uninstParams['AllVersions'] = $true
+            $safeName  = $name.Replace("'", "''")
+            $safeType  = $type.Replace("'", "''")
+            $safeScope = $scope.Replace("'", "''")
+            $safeLoc   = $location.Replace("'", "''")
+
+            $childScript = @"
+try {
+    & {
+$coreUninstallScript
+    } '$safeName' '$safeType' '$safeScope' '$safeLoc'
+    exit 0
+}
+catch {
+    [Console]::Error.WriteLine(`$_.Exception.Message)
+    exit 1
+}
+"@
+            $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($childScript))
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName               = $hostExe
+            $psi.Arguments              = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded"
+            $psi.UseShellExecute        = $false
+            $psi.CreateNoWindow         = $true
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError  = $true
+
+            $proc = [System.Diagnostics.Process]::Start($psi)
+            $outTask = $proc.StandardOutput.ReadToEndAsync()
+            $errTask = $proc.StandardError.ReadToEndAsync()
+            $proc.WaitForExit()
+            $stdOut = $outTask.GetAwaiter().GetResult()
+            $stdErr = $errTask.GetAwaiter().GetResult()
+
+            if ($proc.ExitCode -ne 0) {
+                $errDetail = if (-not [string]::IsNullOrWhiteSpace($stdErr)) { $stdErr.Trim() } elseif (-not [string]::IsNullOrWhiteSpace($stdOut)) { $stdOut.Trim() } else { "Target $edition host exited with code $($proc.ExitCode)." }
+                throw $errDetail
             }
-            Uninstall-Module @uninstParams
         }
-        return "Uninstalled $type '$name'."
+
+        return "Uninstalled $type '$name' ($edition)."
     }
-    Invoke-AsyncTask -Work $work -ArgumentList @($item.Name, $item.Type) -OnComplete {
+
+    Invoke-AsyncTask -Work $work -ArgumentList @($item.Name, $item.Type, $item.Scope, $item.Location, $targetEdition, $targetExe) -OnComplete {
         param($res, $err, $state)
         if ($err) { $lblStatus.Text = "Uninstall failed: $err"; [Windows.Forms.MessageBox]::Show("Uninstall failed:`n$err", 'Error', 'OK', 'Error') | Out-Null }
         else { $lblStatus.Text = ($res | Out-String).Trim(); Invoke-ScanLocalPackages }

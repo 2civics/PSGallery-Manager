@@ -87,6 +87,17 @@ To launch without prompting for Administrator elevation via UAC:
 
 ## Release History
 
+## What's New in v2.4.3
+
+### Dual PowerShell 5.1 & 7.x Runtime Support
+* **Full PowerShell 7 (`pwsh.exe`) Compatibility:** Dynamically resolves loaded .NET 8+ assemblies when compiling Win32/DWM helpers (`PSGalWin32`) and applies `-STA` only on Windows PowerShell 5.1.
+* **Runtime-Preserving UAC Elevation:** Both startup auto-elevation and the top-bar **Elevate** button detect the active host binary (`pwsh.exe` or `powershell.exe`) so relaunching as Administrator stays on the same PowerShell runtime.
+
+### Runtime-Aware Desktop Shortcut Creator
+* **PowerShell 5.1 / 7.x Mode Selector:** Choose whether generated `.lnk` shortcuts target `powershell.exe` or `pwsh.exe`, with live installation status (`Built-in`, `Installed`, or `Not installed`), automatic icon switching, and saved mode preference.
+* **Automatic PowerShell 7 Setup:** Offers one-click background installation of PowerShell 7 (using `winget` with an official GitHub MSI fallback) when creating a PowerShell 7.x shortcut on a PC without `pwsh.exe`.
+* **Built-In Windows Icon Browser:** Added a dedicated **Windows Icons...** button (`shell32.dll`) alongside **Choose Icon...** for one-click access to standard Windows system icons.
+
 ### v2.4.2
 * Added on-demand translation in the Discover Gallery details pane with a **Translate / Show Original** toggle button and a 12-language target selector (auto-detecting source language for descriptions and release notes).
 * Added in-memory translation caching per package version and target language so switching languages or revisiting packages loads instantly without redundant requests.

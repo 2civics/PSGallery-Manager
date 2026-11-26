@@ -1,6 +1,6 @@
-﻿<#PSScriptInfo
+<#PSScriptInfo
 
-.VERSION 2.4.2
+.VERSION 2.4.3
 
 .GUID 8f4e2b91-6c3a-4d7e-9b12-5a8f0c3d7e91
 
@@ -10,17 +10,18 @@
 
 .COPYRIGHT (c) 2026 waresoft. All rights reserved.
 
-.TAGS .TAGS PowerShellGallery PSGallery PowerShellGet PackageManagement GUI WinForms Windows Desktop Utility Automation DevOps Security Publish Publisher Scripts Modules ShortcutCreator DPAPI DarkMode
+.TAGS PowerShellGallery PSGallery PowerShellGet PackageManagement GUI WinForms Windows Desktop Utility Automation DevOps Security Publish Publisher Scripts Modules ShortcutCreator DPAPI DarkMode
 
 .LICENSEURI https://opensource.org/licenses/MIT
 
 .PROJECTURI https://www.powershellgallery.com/packages/PSGallery-Manager/
 
 .RELEASENOTES
-v2.4.2:
-- Added on-demand translation in the Discover Gallery details pane with a Translate / Show Original toggle button and a 12-language target selector (auto-detecting source language for descriptions and release notes).
-- Added in-memory translation caching per package version and target language so switching languages or revisiting packages loads instantly without redundant requests.
-- Enabled automatic height sizing on the Discover details action bar so wrapped button rows never clip at any window width or Windows DPI scaling level.
+v2.4.3:
+- Added full dual-runtime support for both Windows PowerShell 5.1 (powershell.exe) and PowerShell 7.x (pwsh.exe), including dynamic .NET assembly resolution for Win32/DWM helpers and runtime-aware -STA handling.
+- Updated UAC auto-elevation and the header Elevate button to preserve the active PowerShell 5.1 or 7.x host executable across Administrator relaunches.
+- Added a PowerShell Mode selector (PowerShell 5.1 vs. PowerShell 7.x) to the Desktop Shortcut Creator with live installation detection, automatic default icon switching, persistent mode preference, and a dedicated Windows Icons (shell32.dll) browser button.
+- Added guided automatic PowerShell 7 installation (via winget with GitHub MSI fallback) when creating a PowerShell 7.x shortcut on systems where pwsh.exe is not yet installed.
 
 #>
 
@@ -37,6 +38,8 @@ v2.4.2:
         - Publish to PowerShell Gallery: Publish standalone .ps1 scripts or module folders (.psd1/.psm1) with one-click Major, Minor, or Patch version bumps, automatic metadata injection, and pre-publish validation.
         - Encrypted API Key Storage: Protect your PowerShell Gallery API key locally with Windows DPAPI encryption so you never have to paste it repeatedly.
         - Desktop Shortcut Creator: Create Windows .lnk shortcuts for any .ps1 script with custom icons, hidden or normal window modes, execution policy bypass, and optional Administrator elevation.
+
+
 
 
 
@@ -67,7 +70,27 @@ Add-Type -AssemblyName System.Web
 # 1. WIN32 HELPERS (CONSOLE HIDE, DWM TITLEBAR, UXTHEME, SHELL ICON PICKER)
 # ==============================================================================
 if (-not ([System.Management.Automation.PSTypeName]'PSGalWin32').Type) {
-    Add-Type -ReferencedAssemblies 'System.Drawing' -TypeDefinition @'
+Add-Type -AssemblyName System.Drawing
+$addTypeParams = @{}
+if ($PSVersionTable.PSEdition -eq 'Core') {
+    $seenAssemblies = @{}
+    $coreRefs = New-Object System.Collections.Generic.List[string]
+    foreach ($asm in [System.AppDomain]::CurrentDomain.GetAssemblies()) {
+        if (-not $asm.IsDynamic -and -not [string]::IsNullOrWhiteSpace($asm.Location)) {
+            $shortName = $asm.GetName().Name
+            if (-not $seenAssemblies.ContainsKey($shortName)) {
+                $seenAssemblies[$shortName] = $true
+                $coreRefs.Add($asm.Location)
+            }
+        }
+    }
+    $addTypeParams['ReferencedAssemblies'] = $coreRefs.ToArray()
+}
+else {
+    $addTypeParams['ReferencedAssemblies'] = 'System.Drawing'
+}
+Add-Type @addTypeParams -TypeDefinition @'
+
 using System;
 using System.Drawing;
 using System.IO;
@@ -283,10 +306,36 @@ function Test-IsAdministrator {
 }
 
 function Get-PowerShellHostPath {
-    if ($PSVersionTable.PSEdition -eq 'Core') {
-        return (Join-Path $PSHOME 'pwsh.exe')
+    try {
+        $procPath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+        if (-not [string]::IsNullOrWhiteSpace($procPath) -and ($procPath -match '\\(pwsh|powershell)\.exe$') -and (Test-Path -LiteralPath $procPath -PathType Leaf)) {
+            return $procPath
+        }
     }
-    return (Join-Path $PSHOME 'powershell.exe')
+    catch { }
+
+    if ($PSVersionTable.PSEdition -eq 'Core') {
+        return (Join-Path -Path $PSHOME -ChildPath 'pwsh.exe')
+    }
+    return (Join-Path -Path $PSHOME -ChildPath 'powershell.exe')
+}
+
+function New-PowerShellRelaunchArgs {
+    param([Parameter(Mandatory)][string]$ScriptFile)
+
+    $argsList = New-Object System.Collections.Generic.List[string]
+    $argsList.Add('-NoProfile')
+    $argsList.Add('-ExecutionPolicy')
+    $argsList.Add('Bypass')
+    if ($PSVersionTable.PSEdition -ne 'Core') {
+        $argsList.Add('-STA')
+    }
+    $argsList.Add('-WindowStyle')
+    $argsList.Add('Hidden')
+    $argsList.Add('-File')
+    $argsList.Add("`"$ScriptFile`"")
+    $argsList.Add('-NoElevate')
+    return $argsList.ToArray()
 }
 
 $script:IsAdmin = Test-IsAdministrator
@@ -297,14 +346,7 @@ if ((-not $script:IsAdmin) -and (-not $NoElevate) -and $script:Config.AutoElevat
     $scriptFile = $PSCommandPath
 
     if ($scriptFile -and (Test-Path -LiteralPath $scriptFile)) {
-        $argList = @(
-            '-NoProfile',
-            '-ExecutionPolicy', 'Bypass',
-            '-STA',
-            '-WindowStyle', 'Hidden',
-            '-File', "`"$scriptFile`"",
-            '-NoElevate'
-        )
+        $argList = New-PowerShellRelaunchArgs -ScriptFile $scriptFile
         try {
             Start-Process -FilePath $hostExe -ArgumentList $argList -Verb RunAs -WindowStyle Hidden -ErrorAction Stop
             exit 0
@@ -321,14 +363,7 @@ if (-not $script:IsSTA) {
     $hostExe    = Get-PowerShellHostPath
     $scriptFile = $PSCommandPath
     if ($scriptFile -and (Test-Path -LiteralPath $scriptFile)) {
-        $argList = @(
-            '-NoProfile',
-            '-ExecutionPolicy', 'Bypass',
-            '-STA',
-            '-WindowStyle', 'Hidden',
-            '-File', "`"$scriptFile`"",
-            '-NoElevate'
-        )
+        $argList = New-PowerShellRelaunchArgs -ScriptFile $scriptFile
         Start-Process -FilePath $hostExe -ArgumentList $argList -WindowStyle Hidden
         exit 0
     }
@@ -1947,19 +1982,94 @@ $pnlSettingsCard.Controls.Add($btnOpenShortcutTool)
 # ==============================================================================
 # 9. DESKTOP SHORTCUT CREATOR MODAL DIALOG
 # ==============================================================================
+function Get-Pwsh7Info {
+    $exePath  = $null
+    $iconPath = $null
+
+    $candidates = New-Object System.Collections.Generic.List[string]
+    foreach ($p in @(
+        (Join-Path -Path $env:ProgramFiles -ChildPath 'PowerShell\7\pwsh.exe'),
+        (Join-Path -Path ${env:ProgramFiles(x86)} -ChildPath 'PowerShell\7\pwsh.exe'),
+        (Join-Path -Path $env:LOCALAPPDATA -ChildPath 'Microsoft\PowerShell\pwsh.exe'),
+        (Join-Path -Path $env:ProgramFiles -ChildPath 'PowerShell\7-preview\pwsh.exe'),
+        (Join-Path -Path $env:USERPROFILE -ChildPath '.dotnet\tools\pwsh.exe'),
+        (Join-Path -Path $env:USERPROFILE -ChildPath 'scoop\apps\powershell\current\pwsh.exe')
+    )) {
+        if (-not [string]::IsNullOrWhiteSpace($p)) { $candidates.Add($p) }
+    }
+
+    # Check Windows Registry App Paths and PowerShellCore InstalledVersions
+    foreach ($regKey in @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\pwsh.exe',
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\pwsh.exe'
+    )) {
+        try {
+            $regVal = (Get-ItemProperty -LiteralPath $regKey -ErrorAction SilentlyContinue).'(default)'
+            if (-not [string]::IsNullOrWhiteSpace($regVal)) { $candidates.Add($regVal.Trim('"')) }
+        } catch { }
+    }
+
+    try {
+        Get-ChildItem -Path 'HKLM:\SOFTWARE\Microsoft\PowerShellCore\InstalledVersions\*' -ErrorAction SilentlyContinue | ForEach-Object {
+            $dir = (Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue).InstallLocation
+            if (-not [string]::IsNullOrWhiteSpace($dir)) {
+                $candidates.Add((Join-Path -Path $dir -ChildPath 'pwsh.exe'))
+            }
+        }
+    } catch { }
+
+    foreach ($candidate in $candidates) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            $exePath  = $candidate
+            $iconPath = $candidate
+            break
+        }
+    }
+
+    # Fallback: PATH / Microsoft Store (WindowsApps) installation
+    if ([string]::IsNullOrWhiteSpace($exePath)) {
+        $cmd = Get-Command -Name 'pwsh.exe' -ErrorAction SilentlyContinue
+        if ($null -eq $cmd) {
+            $cmd = Get-Command -Name 'pwsh' -CommandType Application -ErrorAction SilentlyContinue
+        }
+        if ($null -ne $cmd -and -not [string]::IsNullOrWhiteSpace($cmd.Source)) {
+            if ($cmd.Source -like '*\WindowsApps\*') {
+                $appx = Get-AppxPackage -Name 'Microsoft.PowerShell*' -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($null -ne $appx -and -not [string]::IsNullOrWhiteSpace($appx.InstallLocation)) {
+                    $exePath = $cmd.Source
+                    $realBin = Join-Path -Path $appx.InstallLocation -ChildPath 'pwsh.exe'
+                    $iconPath = if (Test-Path -LiteralPath $realBin -PathType Leaf) { $realBin } else { $cmd.Source }
+                }
+            }
+            elseif (Test-Path -LiteralPath $cmd.Source -PathType Leaf) {
+                $exePath  = $cmd.Source
+                $iconPath = $cmd.Source
+            }
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($exePath)) { return $null }
+
+    return [PSCustomObject]@{
+        ExePath  = $exePath
+        IconPath = $iconPath
+    }
+}
+
 function Show-DesktopShortcutDialog {
     param([string]$DefaultScriptPath = $PSCommandPath)
 
     $p = Get-ThemePalette
-    $psExePath       = Join-Path -Path $env:SystemRoot -ChildPath 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $defaultIconSpec = "$psExePath,0"
-    $desktopPath     = [Environment]::GetFolderPath('Desktop')
+    $ps5ExePath  = Join-Path -Path $env:SystemRoot -ChildPath 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $ps5IconSpec = "$ps5ExePath,0"
+    $winShellDll = Join-Path -Path $env:SystemRoot -ChildPath 'System32\shell32.dll'
+    $desktopPath = [Environment]::GetFolderPath('Desktop')
 
     $scForm = New-Object System.Windows.Forms.Form -Property @{
         Text            = 'PowerShell Desktop Shortcut Creator'
-        Size            = New-Object System.Drawing.Size(580, 520)
-        MinimumSize     = New-Object System.Drawing.Size(580, 520)
-        MaximumSize     = New-Object System.Drawing.Size(580, 520)
+        Size            = New-Object System.Drawing.Size(580, 552)
+        MinimumSize     = New-Object System.Drawing.Size(580, 552)
+        MaximumSize     = New-Object System.Drawing.Size(580, 552)
         StartPosition   = 'CenterParent'
         FormBorderStyle = 'FixedDialog'
         MaximizeBox     = $false
@@ -2008,41 +2118,65 @@ function Show-DesktopShortcutDialog {
     $scPnlIcon.Controls.Add($scPicIcon)
 
     $scTxtIcon = New-Object System.Windows.Forms.TextBox -Property @{
-        Location = New-Object System.Drawing.Point(70, 162); Size = New-Object System.Drawing.Size(314, 25); Text = $defaultIconSpec; BorderStyle = 'FixedSingle'
+        Location = New-Object System.Drawing.Point(70, 162); Size = New-Object System.Drawing.Size(228, 25); Text = $ps5IconSpec; BorderStyle = 'FixedSingle'
         BackColor = $p.BgInput; ForeColor = $p.FgPrimary
     }
-    $scBtnIcon = New-Object Windows.Forms.Button -Property @{
-        Text = 'Choose Icon...'; Location = New-Object System.Drawing.Point(392, 161); Size = New-Object System.Drawing.Size(92, 26); FlatStyle = 'Flat'; Cursor = 'Hand'
+    $scBtnIcon = New-Object System.Windows.Forms.Button -Property @{
+        Text = 'Choose Icon...'; Location = New-Object System.Drawing.Point(304, 161); Size = New-Object System.Drawing.Size(88, 26); FlatStyle = 'Flat'; Cursor = 'Hand'
         BackColor = $p.BtnSecondary; ForeColor = $p.FgPrimary
     }
     $scBtnIcon.FlatAppearance.BorderColor = $p.Border
 
+    $scBtnWinIcon = New-Object System.Windows.Forms.Button -Property @{
+        Text = 'Windows Icons...'; Location = New-Object System.Drawing.Point(396, 161); Size = New-Object System.Drawing.Size(94, 26); FlatStyle = 'Flat'; Cursor = 'Hand'
+        BackColor = $p.BtnSecondary; ForeColor = $p.FgPrimary
+    }
+    $scBtnWinIcon.FlatAppearance.BorderColor = $p.Border
+
     $scBtnResetIcon = New-Object System.Windows.Forms.Button -Property @{
-        Text = 'Reset'; Location = New-Object System.Drawing.Point(490, 161); Size = New-Object System.Drawing.Size(56, 26); FlatStyle = 'Flat'; Cursor = 'Hand'
+        Text = 'Reset'; Location = New-Object System.Drawing.Point(494, 161); Size = New-Object System.Drawing.Size(52, 26); FlatStyle = 'Flat'; Cursor = 'Hand'
         BackColor = $p.BtnSecondary; ForeColor = $p.FgPrimary
     }
     $scBtnResetIcon.FlatAppearance.BorderColor = $p.Border
 
     $scGrpOpts = New-Object System.Windows.Forms.GroupBox -Property @{
-        Text = 'PowerShell Launch Options'; Location = New-Object System.Drawing.Point(20, 210); Size = New-Object System.Drawing.Size(526, 134)
+        Text = 'PowerShell Launch Options'; Location = New-Object System.Drawing.Point(20, 210); Size = New-Object System.Drawing.Size(526, 166)
         BackColor = $p.BgPanel; ForeColor = $p.FgPrimary
     }
     Initialize-ThemedGroupBox -GroupBox $scGrpOpts
 
+    $scLblMode = New-Object System.Windows.Forms.Label -Property @{
+        Text = 'PowerShell Mode:'; Location = New-Object System.Drawing.Point(16, 29); AutoSize = $true; ForeColor = $p.FgPrimary
+    }
+    $scCmbMode = New-Object System.Windows.Forms.ComboBox -Property @{
+        Location = New-Object System.Drawing.Point(132, 25); Size = New-Object System.Drawing.Size(204, 25); DropDownStyle = 'DropDownList'
+        BackColor = $p.BgInput; ForeColor = $p.FgPrimary
+    }
+    [void]$scCmbMode.Items.AddRange(@('PowerShell 5.1 (powershell.exe)', 'PowerShell 7.x (pwsh.exe)'))
+    $savedMode = if ($null -ne $script:Config -and ($script:Config.PSObject.Properties.Name -contains 'DefaultShortcutPsMode')) {
+        [string]$script:Config.DefaultShortcutPsMode
+    } else { '5.1' }
+    $scCmbMode.SelectedIndex = if ($savedMode -eq '7.x') { 1 } else { 0 }
+    Initialize-ThemedComboBox -ComboBox $scCmbMode
+
+    $scLblModeStatus = New-Object System.Windows.Forms.Label -Property @{
+        Text = ''; Location = New-Object System.Drawing.Point(344, 29); Size = New-Object System.Drawing.Size(172, 20); ForeColor = $p.FgSecondary
+    }
+
     $scChkRunAs = New-Object System.Windows.Forms.CheckBox -Property @{
-        Text = 'Run as Administrator (UAC prompt on launch)'; Location = New-Object System.Drawing.Point(16, 28); AutoSize = $true; ForeColor = $p.FgPrimary
+        Text = 'Run as Administrator (UAC prompt on launch)'; Location = New-Object System.Drawing.Point(16, 60); AutoSize = $true; ForeColor = $p.FgPrimary
     }
     $scChkNoExit = New-Object System.Windows.Forms.CheckBox -Property @{
-        Text = 'Keep PowerShell window open after script finishes (-NoExit)'; Location = New-Object System.Drawing.Point(16, 54); AutoSize = $true; ForeColor = $p.FgPrimary
+        Text = 'Keep PowerShell window open after script finishes (-NoExit)'; Location = New-Object System.Drawing.Point(16, 86); AutoSize = $true; ForeColor = $p.FgPrimary
     }
     $scChkBypass = New-Object System.Windows.Forms.CheckBox -Property @{
-        Text = 'Bypass Execution Policy (-ExecutionPolicy Bypass)'; Location = New-Object System.Drawing.Point(16, 80); Checked = $true; AutoSize = $true; ForeColor = $p.FgPrimary
+        Text = 'Bypass Execution Policy (-ExecutionPolicy Bypass)'; Location = New-Object System.Drawing.Point(16, 112); Checked = $true; AutoSize = $true; ForeColor = $p.FgPrimary
     }
     $scLblWin = New-Object System.Windows.Forms.Label -Property @{
-        Text = 'Window:'; Location = New-Object System.Drawing.Point(346, 30); AutoSize = $true; ForeColor = $p.FgPrimary
+        Text = 'Window:'; Location = New-Object System.Drawing.Point(346, 62); AutoSize = $true; ForeColor = $p.FgPrimary
     }
     $scCmbWin = New-Object System.Windows.Forms.ComboBox -Property @{
-        Location = New-Object System.Drawing.Point(404, 26); Size = New-Object System.Drawing.Size(106, 25); DropDownStyle = 'DropDownList'
+        Location = New-Object System.Drawing.Point(404, 58); Size = New-Object System.Drawing.Size(106, 25); DropDownStyle = 'DropDownList'
         BackColor = $p.BgInput; ForeColor = $p.FgPrimary
     }
     [void]$scCmbWin.Items.AddRange(@('Normal', 'Minimized', 'Maximized', 'Hidden'))
@@ -2050,32 +2184,35 @@ function Show-DesktopShortcutDialog {
     Initialize-ThemedComboBox -ComboBox $scCmbWin
 
     $scLblArgs = New-Object System.Windows.Forms.Label -Property @{
-        Text = 'Script Arguments (optional):'; Location = New-Object System.Drawing.Point(16, 106); AutoSize = $true; ForeColor = $p.FgPrimary
+        Text = 'Script Arguments (optional):'; Location = New-Object System.Drawing.Point(16, 138); AutoSize = $true; ForeColor = $p.FgPrimary
     }
     $scTxtArgs = New-Object System.Windows.Forms.TextBox -Property @{
-        Location = New-Object System.Drawing.Point(180, 103); Size = New-Object System.Drawing.Size(330, 23); BorderStyle = 'FixedSingle'
+        Location = New-Object System.Drawing.Point(180, 135); Size = New-Object System.Drawing.Size(330, 23); BorderStyle = 'FixedSingle'
         BackColor = $p.BgInput; ForeColor = $p.FgPrimary
     }
-    $scGrpOpts.Controls.AddRange(@($scChkRunAs, $scChkNoExit, $scChkBypass, $scLblWin, $scCmbWin, $scLblArgs, $scTxtArgs))
+    $scGrpOpts.Controls.AddRange(@(
+        $scLblMode, $scCmbMode, $scLblModeStatus,
+        $scChkRunAs, $scChkNoExit, $scChkBypass, $scLblWin, $scCmbWin, $scLblArgs, $scTxtArgs
+    ))
 
     $scLblPreview = New-Object System.Windows.Forms.Label -Property @{
-        Text = 'Shortcut Target Command Preview:'; Location = New-Object System.Drawing.Point(20, 354); AutoSize = $true; ForeColor = $p.FgPrimary
+        Text = 'Shortcut Target Command Preview:'; Location = New-Object System.Drawing.Point(20, 386); AutoSize = $true; ForeColor = $p.FgPrimary
     }
     $scTxtPreview = New-Object System.Windows.Forms.TextBox -Property @{
-        Location = New-Object System.Drawing.Point(20, 376); Size = New-Object System.Drawing.Size(526, 42); Multiline = $true; ReadOnly = $true
+        Location = New-Object System.Drawing.Point(20, 408); Size = New-Object System.Drawing.Size(526, 42); Multiline = $true; ReadOnly = $true
         BorderStyle = 'FixedSingle'; Font = $fontMono; BackColor = $p.BgLog; ForeColor = $p.FgSecondary
     }
     $scLblStatus = New-Object System.Windows.Forms.Label -Property @{
-        Text = 'Ready to create Desktop shortcut.'; Location = New-Object System.Drawing.Point(20, 432); Size = New-Object System.Drawing.Size(330, 34); ForeColor = $p.FgSecondary
+        Text = 'Ready to create Desktop shortcut.'; Location = New-Object System.Drawing.Point(20, 464); Size = New-Object System.Drawing.Size(330, 34); ForeColor = $p.FgSecondary
     }
     $scBtnCreate = New-Object System.Windows.Forms.Button -Property @{
-        Text = 'Create Shortcut'; Location = New-Object System.Drawing.Point(358, 428); Size = New-Object System.Drawing.Size(112, 32); FlatStyle = 'Flat'; Cursor = 'Hand'
-        BackColor = $p.Accent; ForeColor = [Drawing.Color]::White; Font = $fontUiBold
+        Text = 'Create Shortcut'; Location = New-Object System.Drawing.Point(358, 460); Size = New-Object System.Drawing.Size(112, 32); FlatStyle = 'Flat'; Cursor = 'Hand'
+        BackColor = $p.Accent; ForeColor = [System.Drawing.Color]::White; Font = $fontUiBold
     }
     $scBtnCreate.FlatAppearance.BorderSize = 0
 
     $scBtnClose = New-Object System.Windows.Forms.Button -Property @{
-        Text = 'Close'; Location = New-Object System.Drawing.Point(476, 428); Size = New-Object System.Drawing.Size(70, 32); FlatStyle = 'Flat'; Cursor = 'Hand'
+        Text = 'Close'; Location = New-Object System.Drawing.Point(476, 460); Size = New-Object System.Drawing.Size(70, 32); FlatStyle = 'Flat'; Cursor = 'Hand'
         BackColor = $p.BtnSecondary; ForeColor = $p.FgPrimary
     }
     $scBtnClose.FlatAppearance.BorderColor = $p.Border
@@ -2083,13 +2220,24 @@ function Show-DesktopShortcutDialog {
     $scForm.Controls.AddRange(@(
         $scLblScript, $scTxtScript, $scBtnBrowse,
         $scLblName, $scTxtName,
-        $scLblIcon, $scPnlIcon, $scTxtIcon, $scBtnIcon, $scBtnResetIcon,
+        $scLblIcon, $scPnlIcon, $scTxtIcon, $scBtnIcon, $scBtnWinIcon, $scBtnResetIcon,
         $scGrpOpts, $scLblPreview, $scTxtPreview, $scLblStatus, $scBtnCreate, $scBtnClose
     ))
 
+    $getDefaultIconForMode = {
+        if ($scCmbMode.SelectedIndex -eq 1) {
+            $info = Get-Pwsh7Info
+            if ($null -ne $info -and -not [string]::IsNullOrWhiteSpace($info.IconPath)) {
+                return "$($info.IconPath),0"
+            }
+        }
+        return $ps5IconSpec
+    }
+
     $resolveIcon = {
         param([string]$Spec)
-        $raw   = if ([string]::IsNullOrWhiteSpace($Spec)) { $defaultIconSpec } else { $Spec.Trim() }
+        $fallback = & $getDefaultIconForMode
+        $raw   = if ([string]::IsNullOrWhiteSpace($Spec)) { $fallback } else { $Spec.Trim() }
         $file  = $raw
         $index = 0
         if ($raw -match '^(.*),\s*(-?\d+)$') {
@@ -2125,12 +2273,237 @@ function Show-DesktopShortcutDialog {
         return ($parts -join ' ')
     }
 
+    $refreshModeStatus = {
+        if ($scCmbMode.SelectedIndex -eq 0) {
+            $scLblModeStatus.ForeColor = $p.FgSecondary
+            $scLblModeStatus.Text      = 'Built-in (Windows)'
+        }
+        else {
+            $info = Get-Pwsh7Info
+            if ($null -ne $info) {
+                $scLblModeStatus.ForeColor = $p.Success
+                $scLblModeStatus.Text      = 'Installed (Ready)'
+            }
+            else {
+                $scLblModeStatus.ForeColor = [System.Drawing.Color]::FromArgb(210, 153, 34)
+                $scLblModeStatus.Text      = 'Not installed'
+            }
+        }
+    }
+
     $refreshState = {
         $path = $scTxtScript.Text.Trim()
         $valid = (-not [string]::IsNullOrWhiteSpace($path)) -and (Test-Path -LiteralPath $path -PathType Leaf)
         $scBtnCreate.Enabled = $valid
-        $scTxtPreview.Text = if ($valid) { "`"$psExePath`" $(& $buildArgs)" } else { '' }
+
+        $previewExe = if ($scCmbMode.SelectedIndex -eq 1) {
+            $info = Get-Pwsh7Info
+            if ($null -ne $info) { $info.ExePath } else { 'pwsh.exe' }
+        }
+        else {
+            $ps5ExePath
+        }
+        $scTxtPreview.Text = if ($valid) { "`"$previewExe`" $(& $buildArgs)" } else { '' }
     }
+
+    $writeShortcutFile = {
+        param(
+            [string]$TargetExePath,
+            [string]$ShortcutFilePath,
+            [string]$ScriptFilePath,
+            [string]$IconSpec,
+            [string]$ModeLabel
+        )
+
+        $wsh = New-Object -ComObject WScript.Shell
+        try {
+            $lnk = $wsh.CreateShortcut($ShortcutFilePath)
+            $lnk.TargetPath       = $TargetExePath
+            $lnk.Arguments        = (& $buildArgs)
+            $lnk.WorkingDirectory = Split-Path -Path $ScriptFilePath -Parent
+            $lnk.IconLocation     = $IconSpec
+            $lnk.WindowStyle      = switch ($scCmbWin.SelectedItem) {
+                'Normal'    { 1 }
+                'Minimized' { 7 }
+                'Maximized' { 3 }
+                'Hidden'    { 7 }
+                default     { 1 }
+            }
+            $lnk.Description = "Run $(Split-Path -Path $ScriptFilePath -Leaf) via $ModeLabel"
+            $lnk.Save()
+        }
+        finally {
+            if ($null -ne $wsh) {
+                [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($wsh)
+            }
+        }
+
+        if ($scChkRunAs.Checked) {
+            $bytes = [System.IO.File]::ReadAllBytes($ShortcutFilePath)
+            $bytes[21] = $bytes[21] -bor 0x20
+            [System.IO.File]::WriteAllBytes($ShortcutFilePath, $bytes)
+        }
+    }
+
+    $startPwsh7Install = {
+        param(
+            [bool]$CreateAfterInstall,
+            [string]$ShortcutPath,
+            [string]$ScriptPath,
+            [string]$CleanName,
+            [string]$IconSpec
+        )
+
+        $scBtnCreate.Enabled  = $false
+        $scBtnClose.Enabled   = $false
+        $scBtnBrowse.Enabled  = $false
+        $scCmbMode.Enabled    = $false
+        $scLblStatus.ForeColor = $p.Accent
+        $scLblStatus.Text      = 'Installing PowerShell 7.x... Please wait.'
+
+        $installWork = {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+            # 1. Try winget first when available
+            $wingetCmd = Get-Command -Name 'winget.exe' -ErrorAction SilentlyContinue
+            if ($null -ne $wingetCmd) {
+                $wgArgs = 'install --id Microsoft.PowerShell --source winget --accept-package-agreements --accept-source-agreements --silent'
+                $proc = Start-Process -FilePath $wingetCmd.Source -ArgumentList $wgArgs -Wait -PassThru -WindowStyle Hidden
+                if ($proc.ExitCode -eq 0) {
+                    return 'winget'
+                }
+            }
+
+            # 2. Fallback: Download latest official PowerShell 7 MSI from GitHub and install
+            $arch    = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'win-arm64.msi' } else { 'win-x64.msi' }
+            $headers = @{ 'User-Agent' = 'PSGallery-Manager' }
+            $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/PowerShell/PowerShell/releases/latest' -Headers $headers -TimeoutSec 25 -ErrorAction Stop
+            $asset   = $release.assets | Where-Object { $_.name -like "*$arch" } | Select-Object -First 1
+            if ($null -eq $asset) {
+                throw "No matching PowerShell 7 installer ($arch) was found on GitHub."
+            }
+
+            $msiPath = Join-Path -Path $env:TEMP -ChildPath $asset.name
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $msiPath -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop
+
+            $msiArgs = "/i `"$msiPath`" /passive ADD_EXPLORER_CONTEXT_MENU_OPENPOWERSHELL=1 ADD_FILE_CONTEXT_MENU_RUNPOWERSHELL=1 USE_MU=1 ENABLE_MU=1"
+            $msiProc = Start-Process -FilePath 'msiexec.exe' -ArgumentList $msiArgs -Wait -PassThru
+            Remove-Item -LiteralPath $msiPath -Force -ErrorAction SilentlyContinue
+
+            if ($msiProc.ExitCode -ne 0 -and $msiProc.ExitCode -ne 3010) {
+                throw "PowerShell 7 installer exited with code $($msiProc.ExitCode)."
+            }
+            return 'msi'
+        }
+
+        $state = @{
+            CreateAfterInstall = $CreateAfterInstall
+            ShortcutPath       = $ShortcutPath
+            ScriptPath         = $ScriptPath
+            CleanName          = $CleanName
+            IconSpec           = $IconSpec
+        }
+
+        Invoke-AsyncTask -Work $installWork -State $state -OnComplete {
+            param($res, $err, $st)
+            if ($scForm.IsDisposed) { return }
+
+            $scBtnClose.Enabled  = $true
+            $scBtnBrowse.Enabled = $true
+            $scCmbMode.Enabled   = $true
+            & $refreshState
+
+            if ($err) {
+                & $refreshModeStatus
+                $scLblStatus.ForeColor = $p.Danger
+                $scLblStatus.Text = "Install failed: $err"
+                [System.Windows.Forms.MessageBox]::Show($scForm, "PowerShell 7 installation failed:`n$err", 'Installation Error', 'OK', 'Error') | Out-Null
+                return
+            }
+
+            $installedInfo = Get-Pwsh7Info
+            if ($null -eq $installedInfo) {
+                & $refreshModeStatus
+                $scLblStatus.ForeColor = $p.Danger
+                $scLblStatus.Text = 'PowerShell 7 installed, but pwsh.exe was not found.'
+                [System.Windows.Forms.MessageBox]::Show($scForm, 'PowerShell 7 finished installing, but pwsh.exe could not be located automatically. Click Create Shortcut again to retry.', 'Detection Needed', 'OK', 'Warning') | Out-Null
+                return
+            }
+
+            # Upgrade default PS 5.1 icon to the new PS 7 icon if user hadn't chosen a custom icon
+            $finalIconSpec = $st.IconSpec
+            if ([string]::IsNullOrWhiteSpace($finalIconSpec) -or ($finalIconSpec -ieq $ps5IconSpec)) {
+                $finalIconSpec = "$($installedInfo.IconPath),0"
+                $scTxtIcon.Text = $finalIconSpec
+            }
+
+            & $refreshModeStatus
+            & $refreshState
+
+            if ($st.CreateAfterInstall) {
+                try {
+                    & $writeShortcutFile $installedInfo.ExePath $st.ShortcutPath $st.ScriptPath $finalIconSpec 'PowerShell 7.x'
+                    $scLblStatus.ForeColor = $p.Success
+                    $scLblStatus.Text = "Installed PowerShell 7.x and created '$($st.CleanName).lnk'."
+                }
+                catch {
+                    $scLblStatus.ForeColor = $p.Danger
+                    $scLblStatus.Text = "Installed PS 7, but shortcut failed: $($_.Exception.Message)"
+                }
+            }
+            else {
+                $scLblStatus.ForeColor = $p.Success
+                $scLblStatus.Text = 'PowerShell 7.x installed. Ready to create shortcut.'
+            }
+        }
+    }
+
+    $scCmbMode.Add_SelectedIndexChanged({
+        $isPs7 = ($scCmbMode.SelectedIndex -eq 1)
+        if ($null -ne $script:Config) {
+            $modeVal = if ($isPs7) { '7.x' } else { '5.1' }
+            if ($script:Config.PSObject.Properties.Name -contains 'DefaultShortcutPsMode') {
+                $script:Config.DefaultShortcutPsMode = $modeVal
+            }
+            else {
+                $script:Config | Add-Member -NotePropertyName 'DefaultShortcutPsMode' -NotePropertyValue $modeVal -Force
+            }
+            if (Get-Command Save-AppConfig -ErrorAction SilentlyContinue) { Save-AppConfig }
+        }
+
+        $curIcon = $scTxtIcon.Text.Trim()
+        if ($isPs7) {
+            $info = Get-Pwsh7Info
+            if ($null -ne $info) {
+                if ([string]::IsNullOrWhiteSpace($curIcon) -or ($curIcon -ieq $ps5IconSpec)) {
+                    $scTxtIcon.Text = "$($info.IconPath),0"
+                }
+            }
+            else {
+                & $refreshModeStatus
+                & $refreshState
+                $askNow = [System.Windows.Forms.MessageBox]::Show(
+                    $scForm,
+                    "PowerShell 7.x (pwsh.exe) is not currently installed on this PC.`n`nWould you like to download and install PowerShell 7 now?",
+                    'PowerShell 7.x Not Installed',
+                    'YesNo',
+                    'Question'
+                )
+                if ($askNow -eq 'Yes') {
+                    & $startPwsh7Install $false '' '' '' $scTxtIcon.Text
+                }
+                return
+            }
+        }
+        else {
+            if ([string]::IsNullOrWhiteSpace($curIcon) -or ($curIcon -match '\\pwsh\.exe,0$')) {
+                $scTxtIcon.Text = $ps5IconSpec
+            }
+        }
+
+        & $refreshModeStatus
+        & $refreshState
+    })
 
     $scBtnBrowse.Add_Click({
         $dlg = New-Object System.Windows.Forms.OpenFileDialog -Property @{
@@ -2144,20 +2517,32 @@ function Show-DesktopShortcutDialog {
         $dlg.Dispose()
     })
 
-    $scBtnIcon.Add_Click({
+    $openIconPickerForFile = {
+        param([string]$SeedPath, [int]$SeedIndex)
         if (-not $script:HasWin32) { return }
-        $parsed = & $resolveIcon $scTxtIcon.Text
-        $seedFile = if (Test-Path -LiteralPath $parsed.File -PathType Leaf) { $parsed.File } else { $psExePath }
-        $seedIdx  = if (Test-Path -LiteralPath $parsed.File -PathType Leaf) { $parsed.Index } else { 0 }
         $sb = New-Object System.Text.StringBuilder(260)
-        [void]$sb.Append($seedFile)
-        $idx = [int]$seedIdx
+        [void]$sb.Append($SeedPath)
+        $idx = [int]$SeedIndex
         if ([PSGalWin32]::PickIconDlg($scForm.Handle, $sb, $sb.Capacity, [ref]$idx) -ne 0) {
             $scTxtIcon.Text = "$([Environment]::ExpandEnvironmentVariables($sb.ToString())),$idx"
         }
+    }
+
+    # Opens the icon picker on the active PowerShell .exe (PS 7 or PS 5.1) or current custom icon file
+    $scBtnIcon.Add_Click({
+        $parsed   = & $resolveIcon $scTxtIcon.Text
+        $fallback = if ($scCmbMode.SelectedIndex -eq 1 -and (Get-Pwsh7Info)) { (Get-Pwsh7Info).IconPath } else { $ps5ExePath }
+        $seedFile = if (Test-Path -LiteralPath $parsed.File -PathType Leaf) { $parsed.File } else { $fallback }
+        $seedIdx  = if (Test-Path -LiteralPath $parsed.File -PathType Leaf) { $parsed.Index } else { 0 }
+        & $openIconPickerForFile $seedFile $seedIdx
     })
 
-    $scBtnResetIcon.Add_Click({ $scTxtIcon.Text = $defaultIconSpec })
+    # Opens the standard built-in Windows shell32.dll icon gallery directly
+    $scBtnWinIcon.Add_Click({
+        & $openIconPickerForFile $winShellDll 0
+    })
+
+    $scBtnResetIcon.Add_Click({ $scTxtIcon.Text = (& $getDefaultIconForMode) })
     $scTxtIcon.Add_TextChanged({ & $refreshIcon })
     $scTxtScript.Add_TextChanged({ & $refreshState })
     $scChkBypass.Add_CheckedChanged({ & $refreshState })
@@ -2176,57 +2561,64 @@ function Show-DesktopShortcutDialog {
     })
 
     $scBtnCreate.Add_Click({
-        $scriptPath = $scTxtScript.Text.Trim()
-        if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
-            $scLblStatus.ForeColor = $p.Danger
-            $scLblStatus.Text = 'Error: The selected script file does not exist.'
-            return
-        }
-        $iconInfo = & $resolveIcon $scTxtIcon.Text
-        if (-not (Test-Path -LiteralPath $iconInfo.File -PathType Leaf)) {
-            $scLblStatus.ForeColor = $p.Danger
-            $scLblStatus.Text = 'Error: The selected icon file does not exist.'
-            return
-        }
-
-        $rawName = if ([string]::IsNullOrWhiteSpace($scTxtName.Text)) { [System.IO.Path]::GetFileNameWithoutExtension($scriptPath) } else { $scTxtName.Text.Trim() }
-        $invalidRegex = [Regex]::Escape(([System.IO.Path]::GetInvalidFileNameChars() -join ''))
-        $cleanName = ($rawName -replace "[$invalidRegex]", '').Trim()
-        if ([string]::IsNullOrWhiteSpace($cleanName)) { $cleanName = [System.IO.Path]::GetFileNameWithoutExtension($scriptPath) }
-        $scTxtName.Text = $cleanName
-
-        $shortcutPath = Join-Path -Path $desktopPath -ChildPath "$cleanName.lnk"
-        if (Test-Path -LiteralPath $shortcutPath) {
-            $ow = [System.Windows.Forms.MessageBox]::Show($scForm, "Overwrite existing '$cleanName.lnk' on Desktop?", 'Confirm Overwrite', 'YesNo', 'Question')
-            if ($ow -ne 'Yes') { return }
-        }
-
         try {
-            $wsh = New-Object -ComObject WScript.Shell
-            $lnk = $wsh.CreateShortcut($shortcutPath)
-            $lnk.TargetPath       = $psExePath
-            $lnk.Arguments        = (& $buildArgs)
-            $lnk.WorkingDirectory = Split-Path -Path $scriptPath -Parent
-            $lnk.IconLocation     = $iconInfo.Spec
-            $lnk.WindowStyle      = switch ($scCmbWin.SelectedItem) {
-                'Normal'    { 1 }
-                'Minimized' { 7 }
-                'Maximized' { 3 }
-                'Hidden'    { 7 }
-                default     { 1 }
+            $scriptPath = $scTxtScript.Text.Trim()
+            if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+                $scLblStatus.ForeColor = $p.Danger
+                $scLblStatus.Text = 'Error: The selected script file does not exist.'
+                return
             }
-            $lnk.Description = "Run $(Split-Path -Path $scriptPath -Leaf) via PowerShell"
-            $lnk.Save()
-            [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($wsh)
-
-            if ($scChkRunAs.Checked) {
-                $bytes = [System.IO.File]::ReadAllBytes($shortcutPath)
-                $bytes[21] = $bytes[21] -bor 0x20
-                [System.IO.File]::WriteAllBytes($shortcutPath, $bytes)
+            $iconInfo = & $resolveIcon $scTxtIcon.Text
+            if (-not (Test-Path -LiteralPath $iconInfo.File -PathType Leaf)) {
+                $scLblStatus.ForeColor = $p.Danger
+                $scLblStatus.Text = 'Error: The selected icon file does not exist.'
+                return
             }
 
-            $scLblStatus.ForeColor = $p.Success
-            $scLblStatus.Text = "Created '$cleanName.lnk' on your Desktop."
+            $rawName = if ([string]::IsNullOrWhiteSpace($scTxtName.Text)) { [System.IO.Path]::GetFileNameWithoutExtension($scriptPath) } else { $scTxtName.Text.Trim() }
+            $invalidRegex = [Regex]::Escape(([System.IO.Path]::GetInvalidFileNameChars() -join ''))
+            $cleanName = ($rawName -replace "[$invalidRegex]", '').Trim()
+            if ([string]::IsNullOrWhiteSpace($cleanName)) { $cleanName = [System.IO.Path]::GetFileNameWithoutExtension($scriptPath) }
+            $scTxtName.Text = $cleanName
+
+            $shortcutPath = Join-Path -Path $desktopPath -ChildPath "$cleanName.lnk"
+            if (Test-Path -LiteralPath $shortcutPath) {
+                $ow = [System.Windows.Forms.MessageBox]::Show($scForm, "Overwrite existing '$cleanName.lnk' on Desktop?", 'Confirm Overwrite', 'YesNo', 'Question')
+                if ($ow -ne 'Yes') { return }
+            }
+
+            # PowerShell 5.1 Mode
+            if ($scCmbMode.SelectedIndex -eq 0) {
+                & $writeShortcutFile $ps5ExePath $shortcutPath $scriptPath $iconInfo.Spec 'PowerShell 5.1'
+                $scLblStatus.ForeColor = $p.Success
+                $scLblStatus.Text = "Created '$cleanName.lnk' (PowerShell 5.1) on your Desktop."
+                return
+            }
+
+            # PowerShell 7.x Mode
+            $pwsh7Info = Get-Pwsh7Info
+            if ($null -ne $pwsh7Info) {
+                & $writeShortcutFile $pwsh7Info.ExePath $shortcutPath $scriptPath $iconInfo.Spec 'PowerShell 7.x'
+                $scLblStatus.ForeColor = $p.Success
+                $scLblStatus.Text = "Created '$cleanName.lnk' (PowerShell 7.x) on your Desktop."
+                return
+            }
+
+            # PowerShell 7.x is not installed -> Ask user before installing, then create shortcut
+            $ask = [System.Windows.Forms.MessageBox]::Show(
+                $scForm,
+                "PowerShell 7.x (pwsh.exe) is not currently installed on this PC.`n`nWould you like to download and install PowerShell 7 now, and then create '$cleanName.lnk'?",
+                'PowerShell 7.x Not Installed',
+                'YesNo',
+                'Question'
+            )
+            if ($ask -ne 'Yes') {
+                $scLblStatus.ForeColor = $p.FgSecondary
+                $scLblStatus.Text = 'Canceled: PowerShell 7.x is not installed.'
+                return
+            }
+
+            & $startPwsh7Install $true $shortcutPath $scriptPath $cleanName $iconInfo.Spec
         }
         catch {
             $scLblStatus.ForeColor = $p.Danger
@@ -2240,8 +2632,16 @@ function Show-DesktopShortcutDialog {
         $scTxtScript.Text = $DefaultScriptPath
         $scTxtName.Text   = [System.IO.Path]::GetFileNameWithoutExtension($DefaultScriptPath)
     }
+    if ($scCmbMode.SelectedIndex -eq 1) {
+        $initialInfo = Get-Pwsh7Info
+        if ($null -ne $initialInfo) {
+            $scTxtIcon.Text = "$($initialInfo.IconPath),0"
+        }
+    }
+
     $scChkNoExit.Checked = $false
     $scChkNoExit.Enabled = $false
+    & $refreshModeStatus
     & $refreshIcon
     & $refreshState
 
@@ -3958,14 +4358,17 @@ $btnOpenShortcutTool.Add_Click({ Show-DesktopShortcutDialog -DefaultScriptPath $
 $btnOpenApiKeysPage.Add_Click({ Start-Process 'https://www.powershellgallery.com/account/apikeys' })
 
 $btnElevateNow.Add_Click({
-    $hostExe = Get-PowerShellHostPath
+    $hostExe    = Get-PowerShellHostPath
     $scriptFile = $PSCommandPath
-    if ($scriptFile -and (Test-Path -LiteralPath $scriptFile)) {
+    if ($scriptFile -and (Test-Path -LiteralPath $scriptFile -PathType Leaf)) {
         try {
-            Start-Process -FilePath $hostExe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-STA', '-WindowStyle', 'Hidden', '-File', "`"$scriptFile`"", '-NoElevate') -Verb RunAs -WindowStyle Hidden -ErrorAction Stop
+            $argList = New-PowerShellRelaunchArgs -ScriptFile $scriptFile
+            Start-Process -FilePath $hostExe -ArgumentList $argList -Verb RunAs -WindowStyle Hidden -ErrorAction Stop
             $form.Close()
         }
-        catch { $lblStatus.Text = 'UAC elevation cancelled; remaining in Standard mode.' }
+        catch {
+            $lblStatus.Text = 'UAC elevation cancelled; remaining in Standard mode.'
+        }
     }
 })
 

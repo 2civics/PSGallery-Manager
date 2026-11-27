@@ -10,6 +10,7 @@ A standalone Windows desktop GUI for browsing, installing, updating, translating
 View the official package listing on **[PowerShell Gallery](https://www.powershellgallery.com/packages/PSGallery-Manager)**.
 
 ---
+<img width="1266" height="853" alt="Screenshot 2026-11-27 130318" src="https://github.com/user-attachments/assets/65038131-3b16-4d94-8449-9faee570fa59" />
 
 ## Key Features
 

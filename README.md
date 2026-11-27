@@ -87,7 +87,18 @@ To launch without prompting for Administrator elevation via UAC:
 
 ## Release History
 
-## What's New is 2.5.0
+## What's New in v2.5.2
+
+- **Fixed Toolbar Versioning:** Updated the toolbar version display to properly reflect the current release after it remained on `v2.5.1`, requiring a version bump to `v2.5.2`.
+
+## What's New in v2.5.1
+
+- **Fixed PowerShell 7.x High-DPI & Multi-Resolution Layout:** Configured `DpiUnawareGdiScaled` high-DPI mode, DPI `AutoScale` baselines, dynamic `ComboBox` item heights, and `WorkingArea` screen clamping so the UI renders cleanly across different resolutions and Windows display scales.
+- **Responsive Toolbars & Dialogs:** Converted header, filter, and package toolbars to wrapping `FlowLayoutPanel`/`TableLayoutPanel` containers, and rebuilt the Desktop Shortcut Creator with a 3-zone docked layout so the command preview and action buttons never clip or overlap on any screen size.
+- **Fixed Cross-Edition Uninstall & Update Errors:** Cleared inherited `PSModulePath` when spawning `powershell.exe` or `pwsh.exe` across editions, and replaced pipeline binding in `Uninstall-Script`/`Uninstall-Module` for full compatibility with inbox `PowerShellGet 1.0.0.1`.
+- **Fixed `AllUsers` Elevation Prompt & Grid Sorting Selection:** Bound row data directly to grid row tags, added fallback selection checks, and parented warning dialogs to the main form so non-elevated `AllUsers` uninstall/update attempts reliably prompt to elevate in PowerShell 7.x.
+
+## What's New in 2.5.0
 
 ### Fixed Cross-Edition Local Package Management
 

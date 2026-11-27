@@ -1,6 +1,6 @@
 <#PSScriptInfo
 
-.VERSION 2.4.4
+.VERSION 2.5.2
 
 .GUID 8f4e2b91-6c3a-4d7e-9b12-5a8f0c3d7e91
 
@@ -17,8 +17,14 @@
 .PROJECTURI https://www.powershellgallery.com/packages/PSGallery-Manager/
 
 .RELEASENOTES
-v2.4.4:
-Fixed PowerShell 5.1 Parser Error: Replaced a UTF-8 em-dash (—) in an API key error message on line 4435 with an ASCII hyphen to prevent Windows PowerShell 5.1 from misreading the character as a closing quote (”) and breaking script parsing.
+v2.5.2:
+- Fixed versioning info in toolbar.  Updated to v.2.5.1 but forgot to change it in the toolbar.  Had to bump to v2.5.2 to release fix.
+
+v2.5.1:
+- Fixed PowerShell 7.x High-DPI & Multi-Resolution Layout: Configured DpiUnawareGdiScaled high-DPI mode, DPI AutoScale baselines, dynamic ComboBox item heights, and WorkingArea screen clamping so the UI renders cleanly across different resolutions and Windows display scales.
+- Responsive Toolbars & Dialogs: Converted header, filter, and package toolbars to wrapping FlowLayoutPanel/TableLayoutPanel containers, and rebuilt the Desktop Shortcut Creator with a 3-zone docked layout so the command preview and action buttons never clip or overlap on any screen size.
+- Fixed Cross-Edition Uninstall & Update Errors: Cleared inherited PSModulePath when spawning powershell.exe or pwsh.exe across editions, and replaced pipeline binding in Uninstall-Script/Uninstall-Module for full compatibility with inbox PowerShellGet 1.0.0.1.
+- Fixed AllUsers Elevation Prompt & Grid Sorting Selection: Bound row data directly to grid row tags, added fallback selection checks, and parented warning dialogs to the main form so non-elevated AllUsers uninstall/update attempts reliably prompt to elevate in PowerShell 7.x.
 
 #>
 
@@ -40,15 +46,6 @@ Fixed PowerShell 5.1 Parser Error: Replaced a UTF-8 em-dash (—) in an API key 
 
 
 
-
-
-
-
-
-
-
-
-
 .PARAMETER NoElevate Prevents the application from requesting Administrator elevation via UAC on startup.
 #>
 
@@ -60,7 +57,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:AppVersion = '2.4.4'
+$script:AppVersion = '2.5.2'
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -380,8 +377,20 @@ catch {
 }
 
 # ==============================================================================
-# 4. VISUAL STYLES & SHARED DPAPI CREDENTIAL HELPERS
+# 4. DPI MODE, VISUAL STYLES & SHARED DPAPI CREDENTIAL HELPERS
 # ==============================================================================
+if ($PSVersionTable.PSEdition -eq 'Core') {
+    try {
+        if (([System.Windows.Forms.Application]).GetMethod('SetHighDpiMode')) {
+            [void][System.Windows.Forms.Application]::SetHighDpiMode([System.Windows.Forms.HighDpiMode]::DpiUnawareGdiScaled)
+        }
+    }
+    catch { }
+}
+try {
+    [System.Windows.Forms.Application]::SetCompatibleTextRenderingDefault($false)
+}
+catch { }
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
 function Save-ProtectedApiKey {
@@ -509,7 +518,8 @@ function Initialize-ThemedComboBox {
 
     $ComboBox.FlatStyle  = 'Flat'
     $ComboBox.DrawMode   = 'OwnerDrawFixed'
-    $ComboBox.ItemHeight = 20
+    $measuredH           = [System.Windows.Forms.TextRenderer]::MeasureText('Ag', $ComboBox.Font).Height
+    $ComboBox.ItemHeight = [Math]::Max(20, $measuredH + 6)
 
     $ComboBox.Add_HandleCreated({
         param($sender, $e)
@@ -827,71 +837,91 @@ $fontMono      = New-Object Drawing.Font('Consolas', 9.25)
 $toolTip = New-Object System.Windows.Forms.ToolTip
 
 $form = New-Object Windows.Forms.Form
+$form.SuspendLayout()
+$form.AutoScaleDimensions = New-Object Drawing.SizeF(96, 96)
+$form.AutoScaleMode = [Windows.Forms.AutoScaleMode]::Dpi
 $form.Text = "PowerShell Gallery Manager & Publisher v$($script:AppVersion)"
 $form.Size = New-Object Drawing.Size(1280, 860)
-$form.MinimumSize = New-Object Drawing.Size(1120, 760)
+$form.MinimumSize = New-Object Drawing.Size(860, 580)
 $form.StartPosition = 'CenterScreen'
 $form.WindowState = 'Normal'
 $form.ShowInTaskbar = $true
 $form.Font = $fontUi
 
-# --- Top Header Bar ---
-$pnlHeader = New-Object Windows.Forms.Panel
+# --- Top Header Bar (Responsive 2-column TableLayoutPanel) ---
+$pnlHeader = New-Object Windows.Forms.TableLayoutPanel
 $pnlHeader.Dock = 'Top'
-$pnlHeader.Height = 58
-$pnlHeader.Padding = New-Object Windows.Forms.Padding(16, 10, 16, 10)
+$pnlHeader.AutoSize = $true
+$pnlHeader.AutoSizeMode = 'GrowAndShrink'
+$pnlHeader.ColumnCount = 2
+$pnlHeader.RowCount = 1
+$pnlHeader.Padding = New-Object Windows.Forms.Padding(12, 8, 12, 8)
+[void]$pnlHeader.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Percent, 100)))
+[void]$pnlHeader.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::AutoSize)))
+[void]$pnlHeader.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::AutoSize)))
 $form.Controls.Add($pnlHeader)
+
+$pnlHeaderLeft = New-Object Windows.Forms.FlowLayoutPanel
+$pnlHeaderLeft.Dock = 'Fill'
+$pnlHeaderLeft.FlowDirection = 'LeftToRight'
+$pnlHeaderLeft.WrapContents = $true
+$pnlHeaderLeft.AutoSize = $true
+$pnlHeaderLeft.AutoSizeMode = 'GrowAndShrink'
+$pnlHeaderLeft.Margin = New-Object Windows.Forms.Padding(0)
+$pnlHeader.Controls.Add($pnlHeaderLeft, 0, 0)
 
 $lblAppTitle = New-Object Windows.Forms.Label
 $lblAppTitle.Text = 'PSGallery Suite'
 $lblAppTitle.Font = $fontTitle
 $lblAppTitle.AutoSize = $true
-$lblAppTitle.Location = New-Object Drawing.Point(16, 15)
-$pnlHeader.Controls.Add($lblAppTitle)
+$lblAppTitle.Margin = New-Object Windows.Forms.Padding(4, 6, 16, 4)
+$pnlHeaderLeft.Controls.Add($lblAppTitle)
 
 $btnNavDiscover = New-Object Windows.Forms.Button
 $btnNavDiscover.Text = 'Discover Gallery'
 $btnNavDiscover.Font = $fontUiBold
 $btnNavDiscover.Size = New-Object Drawing.Size(135, 34)
-$btnNavDiscover.Location = New-Object Drawing.Point(175, 12)
+$btnNavDiscover.Margin = New-Object Windows.Forms.Padding(0, 2, 6, 2)
 $btnNavDiscover.FlatStyle = 'Flat'
 $btnNavDiscover.Cursor = 'Hand'
-$pnlHeader.Controls.Add($btnNavDiscover)
+$pnlHeaderLeft.Controls.Add($btnNavDiscover)
 
 $btnNavMyScripts = New-Object Windows.Forms.Button
 $btnNavMyScripts.Text = 'My Gallery && Local'
 $btnNavMyScripts.Font = $fontUiBold
 $btnNavMyScripts.Size = New-Object Drawing.Size(145, 34)
-$btnNavMyScripts.Location = New-Object Drawing.Point(316, 12)
+$btnNavMyScripts.Margin = New-Object Windows.Forms.Padding(0, 2, 6, 2)
 $btnNavMyScripts.FlatStyle = 'Flat'
 $btnNavMyScripts.Cursor = 'Hand'
-$pnlHeader.Controls.Add($btnNavMyScripts)
+$pnlHeaderLeft.Controls.Add($btnNavMyScripts)
 
 $btnNavPublish = New-Object Windows.Forms.Button
 $btnNavPublish.Text = 'Publish to Gallery'
 $btnNavPublish.Font = $fontUiBold
 $btnNavPublish.Size = New-Object Drawing.Size(140, 34)
-$btnNavPublish.Location = New-Object Drawing.Point(467, 12)
+$btnNavPublish.Margin = New-Object Windows.Forms.Padding(0, 2, 6, 2)
 $btnNavPublish.FlatStyle = 'Flat'
 $btnNavPublish.Cursor = 'Hand'
-$pnlHeader.Controls.Add($btnNavPublish)
+$pnlHeaderLeft.Controls.Add($btnNavPublish)
 
 $btnNavSettings = New-Object Windows.Forms.Button
 $btnNavSettings.Text = 'Settings && Keys'
 $btnNavSettings.Font = $fontUiBold
 $btnNavSettings.Size = New-Object Drawing.Size(125, 34)
-$btnNavSettings.Location = New-Object Drawing.Point(613, 12)
+$btnNavSettings.Margin = New-Object Windows.Forms.Padding(0, 2, 6, 2)
 $btnNavSettings.FlatStyle = 'Flat'
 $btnNavSettings.Cursor = 'Hand'
-$pnlHeader.Controls.Add($btnNavSettings)
+$pnlHeaderLeft.Controls.Add($btnNavSettings)
 
 $pnlHeaderRight = New-Object Windows.Forms.FlowLayoutPanel
-$pnlHeaderRight.Dock = 'Right'
+$pnlHeaderRight.Dock = 'Top'
 $pnlHeaderRight.FlowDirection = 'RightToLeft'
 $pnlHeaderRight.WrapContents = $false
 $pnlHeaderRight.AutoSize = $true
-$pnlHeaderRight.Padding = New-Object Windows.Forms.Padding(0, 3, 0, 0)
-$pnlHeader.Controls.Add($pnlHeaderRight)
+$pnlHeaderRight.AutoSizeMode = 'GrowAndShrink'
+$pnlHeaderRight.Padding = New-Object Windows.Forms.Padding(0, 2, 0, 0)
+$pnlHeaderRight.Margin = New-Object Windows.Forms.Padding(8, 0, 0, 0)
+$pnlHeader.Controls.Add($pnlHeaderRight, 1, 0)
 
 $cmbTheme = New-Object Windows.Forms.ComboBox
 $cmbTheme.DropDownStyle = 'DropDownList'
@@ -968,22 +998,24 @@ $viewDiscover = New-Object Windows.Forms.Panel
 $viewDiscover.Dock = 'Fill'
 $pnlMain.Controls.Add($viewDiscover)
 
-$pnlFilter = New-Object Windows.Forms.Panel
+$pnlFilter = New-Object Windows.Forms.FlowLayoutPanel
 $pnlFilter.Dock = 'Top'
-$pnlFilter.Height = 52
-$pnlFilter.Padding = New-Object Windows.Forms.Padding(10, 9, 10, 9)
+$pnlFilter.WrapContents = $true
+$pnlFilter.AutoSize = $true
+$pnlFilter.AutoSizeMode = 'GrowAndShrink'
+$pnlFilter.Padding = New-Object Windows.Forms.Padding(10, 8, 10, 8)
 $viewDiscover.Controls.Add($pnlFilter)
 
 $lblCat = New-Object Windows.Forms.Label
 $lblCat.Text = 'Category:'
 $lblCat.AutoSize = $true
-$lblCat.Location = New-Object Drawing.Point(12, 15)
+$lblCat.Margin = New-Object Windows.Forms.Padding(2, 7, 4, 4)
 $pnlFilter.Controls.Add($lblCat)
 
 $cmbCategory = New-Object Windows.Forms.ComboBox
 $cmbCategory.DropDownStyle = 'DropDownList'
-$cmbCategory.Location = New-Object Drawing.Point(78, 12)
 $cmbCategory.Size = New-Object Drawing.Size(155, 26)
+$cmbCategory.Margin = New-Object Windows.Forms.Padding(0, 3, 10, 3)
 [void]$cmbCategory.Items.AddRange($script:GalleryCategories)
 $cmbCategory.SelectedIndex = 0
 $pnlFilter.Controls.Add($cmbCategory)
@@ -991,13 +1023,13 @@ $pnlFilter.Controls.Add($cmbCategory)
 $lblType = New-Object Windows.Forms.Label
 $lblType.Text = 'Type:'
 $lblType.AutoSize = $true
-$lblType.Location = New-Object Drawing.Point(246, 15)
+$lblType.Margin = New-Object Windows.Forms.Padding(2, 7, 4, 4)
 $pnlFilter.Controls.Add($lblType)
 
 $cmbItemType = New-Object Windows.Forms.ComboBox
 $cmbItemType.DropDownStyle = 'DropDownList'
-$cmbItemType.Location = New-Object Drawing.Point(288, 12)
 $cmbItemType.Size = New-Object Drawing.Size(105, 26)
+$cmbItemType.Margin = New-Object Windows.Forms.Padding(0, 3, 10, 3)
 [void]$cmbItemType.Items.AddRange(@('Scripts', 'All', 'Modules'))
 $cmbItemType.SelectedIndex = 0
 $pnlFilter.Controls.Add($cmbItemType)
@@ -1005,36 +1037,36 @@ $pnlFilter.Controls.Add($cmbItemType)
 $lblSort = New-Object Windows.Forms.Label
 $lblSort.Text = 'Sort:'
 $lblSort.AutoSize = $true
-$lblSort.Location = New-Object Drawing.Point(406, 15)
+$lblSort.Margin = New-Object Windows.Forms.Padding(2, 7, 4, 4)
 $pnlFilter.Controls.Add($lblSort)
 
 $cmbSort = New-Object Windows.Forms.ComboBox
 $cmbSort.DropDownStyle = 'DropDownList'
-$cmbSort.Location = New-Object Drawing.Point(444, 12)
 $cmbSort.Size = New-Object Drawing.Size(150, 26)
+$cmbSort.Margin = New-Object Windows.Forms.Padding(0, 3, 12, 3)
 [void]$cmbSort.Items.AddRange(@('Most Downloaded', 'Recently Updated', 'Name (A-Z)'))
 $cmbSort.SelectedIndex = 0
 $pnlFilter.Controls.Add($cmbSort)
 
 $txtSearch = New-Object Windows.Forms.TextBox
-$txtSearch.Location = New-Object Drawing.Point(608, 12)
-$txtSearch.Size = New-Object Drawing.Size(260, 26)
+$txtSearch.Size = New-Object Drawing.Size(250, 26)
+$txtSearch.Margin = New-Object Windows.Forms.Padding(0, 3, 8, 3)
 $txtSearch.BorderStyle = 'FixedSingle'
 $pnlFilter.Controls.Add($txtSearch)
 
 $btnSearch = New-Object Windows.Forms.Button
 $btnSearch.Text = 'Search'
 $btnSearch.Font = $fontUiBold
-$btnSearch.Location = New-Object Drawing.Point(878, 10)
-$btnSearch.Size = New-Object Drawing.Size(95, 30)
+$btnSearch.Size = New-Object Drawing.Size(92, 30)
+$btnSearch.Margin = New-Object Windows.Forms.Padding(0, 1, 10, 2)
 $btnSearch.FlatStyle = 'Flat'
 $btnSearch.Cursor = 'Hand'
 $pnlFilter.Controls.Add($btnSearch)
 
 $btnPrevPage = New-Object Windows.Forms.Button
 $btnPrevPage.Text = '< Prev'
-$btnPrevPage.Location = New-Object Drawing.Point(985, 10)
 $btnPrevPage.Size = New-Object Drawing.Size(68, 30)
+$btnPrevPage.Margin = New-Object Windows.Forms.Padding(0, 1, 4, 2)
 $btnPrevPage.FlatStyle = 'Flat'
 $btnPrevPage.Cursor = 'Hand'
 $btnPrevPage.Enabled = $false
@@ -1042,15 +1074,15 @@ $pnlFilter.Controls.Add($btnPrevPage)
 
 $lblPage = New-Object Windows.Forms.Label
 $lblPage.Text = 'Page 1'
-$lblPage.Location = New-Object Drawing.Point(1058, 15)
-$lblPage.Size = New-Object Drawing.Size(54, 22)
+$lblPage.Size = New-Object Drawing.Size(56, 24)
+$lblPage.Margin = New-Object Windows.Forms.Padding(0, 4, 4, 2)
 $lblPage.TextAlign = 'MiddleCenter'
 $pnlFilter.Controls.Add($lblPage)
 
 $btnNextPage = New-Object Windows.Forms.Button
 $btnNextPage.Text = 'Next >'
-$btnNextPage.Location = New-Object Drawing.Point(1116, 10)
 $btnNextPage.Size = New-Object Drawing.Size(68, 30)
+$btnNextPage.Margin = New-Object Windows.Forms.Padding(0, 1, 0, 2)
 $btnNextPage.FlatStyle = 'Flat'
 $btnNextPage.Cursor = 'Hand'
 $pnlFilter.Controls.Add($btnNextPage)
@@ -1186,7 +1218,6 @@ $cmbTargetLang.SelectedIndex = 0
 $toolTip.SetToolTip($cmbTargetLang, 'Target language for package description translation')
 $pnlDetActions.Controls.Add($cmbTargetLang)
 
-
 $txtDetBody = New-Object Windows.Forms.TextBox
 $txtDetBody.Multiline = $true
 $txtDetBody.ReadOnly = $true
@@ -1204,17 +1235,19 @@ $viewMyScripts.Dock = 'Fill'
 $viewMyScripts.Visible = $false
 $pnlMain.Controls.Add($viewMyScripts)
 
-$pnlMySubNav = New-Object Windows.Forms.Panel
+$pnlMySubNav = New-Object Windows.Forms.FlowLayoutPanel
 $pnlMySubNav.Dock = 'Top'
-$pnlMySubNav.Height = 46
+$pnlMySubNav.WrapContents = $true
+$pnlMySubNav.AutoSize = $true
+$pnlMySubNav.AutoSizeMode = 'GrowAndShrink'
 $pnlMySubNav.Padding = New-Object Windows.Forms.Padding(10, 7, 10, 7)
 $viewMyScripts.Controls.Add($pnlMySubNav)
 
 $btnSubPublished = New-Object Windows.Forms.Button
 $btnSubPublished.Text = 'My Published Gallery Packages'
 $btnSubPublished.Font = $fontUiBold
-$btnSubPublished.Location = New-Object Drawing.Point(10, 7)
 $btnSubPublished.Size = New-Object Drawing.Size(230, 32)
+$btnSubPublished.Margin = New-Object Windows.Forms.Padding(0, 0, 8, 0)
 $btnSubPublished.FlatStyle = 'Flat'
 $btnSubPublished.Cursor = 'Hand'
 $pnlMySubNav.Controls.Add($btnSubPublished)
@@ -1222,8 +1255,8 @@ $pnlMySubNav.Controls.Add($btnSubPublished)
 $btnSubLocal = New-Object Windows.Forms.Button
 $btnSubLocal.Text = 'Installed on This PC (Scripts && Modules)'
 $btnSubLocal.Font = $fontUiBold
-$btnSubLocal.Location = New-Object Drawing.Point(248, 7)
 $btnSubLocal.Size = New-Object Drawing.Size(275, 32)
+$btnSubLocal.Margin = New-Object Windows.Forms.Padding(0)
 $btnSubLocal.FlatStyle = 'Flat'
 $btnSubLocal.Cursor = 'Hand'
 $pnlMySubNav.Controls.Add($btnSubLocal)
@@ -1234,21 +1267,23 @@ $subViewPublished.Dock = 'Fill'
 $viewMyScripts.Controls.Add($subViewPublished)
 $subViewPublished.BringToFront()
 
-$pnlPubBar = New-Object Windows.Forms.Panel
+$pnlPubBar = New-Object Windows.Forms.FlowLayoutPanel
 $pnlPubBar.Dock = 'Top'
-$pnlPubBar.Height = 48
+$pnlPubBar.WrapContents = $true
+$pnlPubBar.AutoSize = $true
+$pnlPubBar.AutoSizeMode = 'GrowAndShrink'
 $pnlPubBar.Padding = New-Object Windows.Forms.Padding(10, 8, 10, 8)
 $subViewPublished.Controls.Add($pnlPubBar)
 
 $lblPubAccount = New-Object Windows.Forms.Label
 $lblPubAccount.Text = 'Publisher Username:'
 $lblPubAccount.AutoSize = $true
-$lblPubAccount.Location = New-Object Drawing.Point(10, 14)
+$lblPubAccount.Margin = New-Object Windows.Forms.Padding(0, 7, 6, 3)
 $pnlPubBar.Controls.Add($lblPubAccount)
 
 $txtPubUser = New-Object Windows.Forms.TextBox
-$txtPubUser.Location = New-Object Drawing.Point(145, 11)
 $txtPubUser.Size = New-Object Drawing.Size(185, 26)
+$txtPubUser.Margin = New-Object Windows.Forms.Padding(0, 3, 8, 3)
 $txtPubUser.BorderStyle = 'FixedSingle'
 $txtPubUser.Text = $script:Config.Username
 $pnlPubBar.Controls.Add($txtPubUser)
@@ -1256,40 +1291,40 @@ $pnlPubBar.Controls.Add($txtPubUser)
 $btnRefreshPub = New-Object Windows.Forms.Button
 $btnRefreshPub.Text = 'Load My Packages'
 $btnRefreshPub.Font = $fontUiBold
-$btnRefreshPub.Location = New-Object Drawing.Point(338, 9)
 $btnRefreshPub.Size = New-Object Drawing.Size(140, 30)
+$btnRefreshPub.Margin = New-Object Windows.Forms.Padding(0, 1, 8, 2)
 $btnRefreshPub.FlatStyle = 'Flat'
 $btnRefreshPub.Cursor = 'Hand'
 $pnlPubBar.Controls.Add($btnRefreshPub)
 
 $btnPubDownload = New-Object Windows.Forms.Button
 $btnPubDownload.Text = 'Download Copy'
-$btnPubDownload.Location = New-Object Drawing.Point(486, 9)
 $btnPubDownload.Size = New-Object Drawing.Size(120, 30)
+$btnPubDownload.Margin = New-Object Windows.Forms.Padding(0, 1, 8, 2)
 $btnPubDownload.FlatStyle = 'Flat'
 $btnPubDownload.Cursor = 'Hand'
 $pnlPubBar.Controls.Add($btnPubDownload)
 
 $btnPubInspect = New-Object Windows.Forms.Button
 $btnPubInspect.Text = 'Inspect Code'
-$btnPubInspect.Location = New-Object Drawing.Point(614, 9)
 $btnPubInspect.Size = New-Object Drawing.Size(110, 30)
+$btnPubInspect.Margin = New-Object Windows.Forms.Padding(0, 1, 8, 2)
 $btnPubInspect.FlatStyle = 'Flat'
 $btnPubInspect.Cursor = 'Hand'
 $pnlPubBar.Controls.Add($btnPubInspect)
 
 $btnPubOpenWeb = New-Object Windows.Forms.Button
 $btnPubOpenWeb.Text = 'Manage on Web'
-$btnPubOpenWeb.Location = New-Object Drawing.Point(732, 9)
 $btnPubOpenWeb.Size = New-Object Drawing.Size(120, 30)
+$btnPubOpenWeb.Margin = New-Object Windows.Forms.Padding(0, 1, 8, 2)
 $btnPubOpenWeb.FlatStyle = 'Flat'
 $btnPubOpenWeb.Cursor = 'Hand'
 $pnlPubBar.Controls.Add($btnPubOpenWeb)
 
 $btnPubUnlist = New-Object Windows.Forms.Button
 $btnPubUnlist.Text = 'Unlist Version (API Key)'
-$btnPubUnlist.Location = New-Object Drawing.Point(860, 9)
 $btnPubUnlist.Size = New-Object Drawing.Size(165, 30)
+$btnPubUnlist.Margin = New-Object Windows.Forms.Padding(0, 1, 0, 2)
 $btnPubUnlist.FlatStyle = 'Flat'
 $btnPubUnlist.Cursor = 'Hand'
 $pnlPubBar.Controls.Add($btnPubUnlist)
@@ -1318,17 +1353,19 @@ $subViewLocal.Dock = 'Fill'
 $subViewLocal.Visible = $false
 $viewMyScripts.Controls.Add($subViewLocal)
 
-$pnlLocalBar = New-Object Windows.Forms.Panel
+$pnlLocalBar = New-Object Windows.Forms.FlowLayoutPanel
 $pnlLocalBar.Dock = 'Top'
-$pnlLocalBar.Height = 48
+$pnlLocalBar.WrapContents = $true
+$pnlLocalBar.AutoSize = $true
+$pnlLocalBar.AutoSizeMode = 'GrowAndShrink'
 $pnlLocalBar.Padding = New-Object Windows.Forms.Padding(10, 8, 10, 8)
 $subViewLocal.Controls.Add($pnlLocalBar)
 
 $btnScanLocal = New-Object Windows.Forms.Button
 $btnScanLocal.Text = 'Refresh Installed'
 $btnScanLocal.Font = $fontUiBold
-$btnScanLocal.Location = New-Object Drawing.Point(10, 9)
 $btnScanLocal.Size = New-Object Drawing.Size(140, 30)
+$btnScanLocal.Margin = New-Object Windows.Forms.Padding(0, 1, 8, 2)
 $btnScanLocal.FlatStyle = 'Flat'
 $btnScanLocal.Cursor = 'Hand'
 $pnlLocalBar.Controls.Add($btnScanLocal)
@@ -1336,48 +1373,48 @@ $pnlLocalBar.Controls.Add($btnScanLocal)
 $btnCheckUpdates = New-Object Windows.Forms.Button
 $btnCheckUpdates.Text = 'Check Gallery Updates'
 $btnCheckUpdates.Font = $fontUiBold
-$btnCheckUpdates.Location = New-Object Drawing.Point(158, 9)
 $btnCheckUpdates.Size = New-Object Drawing.Size(175, 30)
+$btnCheckUpdates.Margin = New-Object Windows.Forms.Padding(0, 1, 8, 2)
 $btnCheckUpdates.FlatStyle = 'Flat'
 $btnCheckUpdates.Cursor = 'Hand'
 $pnlLocalBar.Controls.Add($btnCheckUpdates)
 
 $btnUpdateLocal = New-Object Windows.Forms.Button
 $btnUpdateLocal.Text = 'Update Selected'
-$btnUpdateLocal.Location = New-Object Drawing.Point(341, 9)
 $btnUpdateLocal.Size = New-Object Drawing.Size(130, 30)
+$btnUpdateLocal.Margin = New-Object Windows.Forms.Padding(0, 1, 8, 2)
 $btnUpdateLocal.FlatStyle = 'Flat'
 $btnUpdateLocal.Cursor = 'Hand'
 $pnlLocalBar.Controls.Add($btnUpdateLocal)
 
 $btnUninstallLocal = New-Object Windows.Forms.Button
 $btnUninstallLocal.Text = 'Uninstall Selected'
-$btnUninstallLocal.Location = New-Object Drawing.Point(479, 9)
 $btnUninstallLocal.Size = New-Object Drawing.Size(135, 30)
+$btnUninstallLocal.Margin = New-Object Windows.Forms.Padding(0, 1, 8, 2)
 $btnUninstallLocal.FlatStyle = 'Flat'
 $btnUninstallLocal.Cursor = 'Hand'
 $pnlLocalBar.Controls.Add($btnUninstallLocal)
 
 $btnOpenLocalFolder = New-Object Windows.Forms.Button
 $btnOpenLocalFolder.Text = 'Open Folder'
-$btnOpenLocalFolder.Location = New-Object Drawing.Point(622, 9)
 $btnOpenLocalFolder.Size = New-Object Drawing.Size(110, 30)
+$btnOpenLocalFolder.Margin = New-Object Windows.Forms.Padding(0, 1, 8, 2)
 $btnOpenLocalFolder.FlatStyle = 'Flat'
 $btnOpenLocalFolder.Cursor = 'Hand'
 $pnlLocalBar.Controls.Add($btnOpenLocalFolder)
 
 $btnEditLocal = New-Object Windows.Forms.Button
 $btnEditLocal.Text = 'Open in Editor'
-$btnEditLocal.Location = New-Object Drawing.Point(740, 9)
 $btnEditLocal.Size = New-Object Drawing.Size(120, 30)
+$btnEditLocal.Margin = New-Object Windows.Forms.Padding(0, 1, 8, 2)
 $btnEditLocal.FlatStyle = 'Flat'
 $btnEditLocal.Cursor = 'Hand'
 $pnlLocalBar.Controls.Add($btnEditLocal)
 
 $btnLocalShortcut = New-Object Windows.Forms.Button
 $btnLocalShortcut.Text = 'Desktop Shortcut...'
-$btnLocalShortcut.Location = New-Object Drawing.Point(868, 9)
 $btnLocalShortcut.Size = New-Object Drawing.Size(145, 30)
+$btnLocalShortcut.Margin = New-Object Windows.Forms.Padding(0, 1, 0, 2)
 $btnLocalShortcut.FlatStyle = 'Flat'
 $btnLocalShortcut.Cursor = 'Hand'
 $toolTip.SetToolTip($btnLocalShortcut, 'Create a Desktop shortcut (.lnk) for the selected local script (or double-click / right-click a row)')
@@ -1428,7 +1465,8 @@ $pnlMain.Controls.Add($viewPublish)
 
 $pnlPubLeft = New-Object Windows.Forms.Panel
 $pnlPubLeft.Dock = 'Left'
-$pnlPubLeft.Width = 680
+$pnlPubLeft.Width = 684
+$pnlPubLeft.AutoScroll = $true
 $pnlPubLeft.Padding = New-Object Windows.Forms.Padding(12)
 $viewPublish.Controls.Add($pnlPubLeft)
 
@@ -1768,7 +1806,7 @@ $lblPubUploadState = New-Object Windows.Forms.Label
 $lblPubUploadState.Text = 'Status: Idle'
 $lblPubUploadState.Font = $fontBadge
 $lblPubUploadState.Dock = 'Right'
-$lblPubUploadState.Width = 280
+$lblPubUploadState.Width = 260
 $lblPubUploadState.TextAlign = 'MiddleRight'
 $pnlPubStatusCard.Controls.Add($lblPubUploadState)
 
@@ -2000,7 +2038,6 @@ function Get-Pwsh7Info {
         if (-not [string]::IsNullOrWhiteSpace($p)) { $candidates.Add($p) }
     }
 
-    # Check Windows Registry App Paths and PowerShellCore InstalledVersions
     foreach ($regKey in @(
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\pwsh.exe',
         'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\pwsh.exe'
@@ -2028,7 +2065,6 @@ function Get-Pwsh7Info {
         }
     }
 
-    # Fallback: PATH / Microsoft Store (WindowsApps) installation
     if ([string]::IsNullOrWhiteSpace($exePath)) {
         $cmd = Get-Command -Name 'pwsh.exe' -ErrorAction SilentlyContinue
         if ($null -eq $cmd) {
@@ -2067,19 +2103,44 @@ function Show-DesktopShortcutDialog {
     $winShellDll = Join-Path -Path $env:SystemRoot -ChildPath 'System32\shell32.dll'
     $desktopPath = [Environment]::GetFolderPath('Desktop')
 
-    $scForm = New-Object System.Windows.Forms.Form -Property @{
-        Text            = 'PowerShell Desktop Shortcut Creator'
-        Size            = New-Object System.Drawing.Size(580, 552)
-        MinimumSize     = New-Object System.Drawing.Size(580, 552)
-        MaximumSize     = New-Object System.Drawing.Size(580, 552)
-        StartPosition   = 'CenterParent'
-        FormBorderStyle = 'FixedDialog'
-        MaximizeBox     = $false
-        MinimizeBox     = $false
-        Font            = $fontUi
-        BackColor       = $p.BgMain
-        ForeColor       = $p.FgPrimary
-    }
+    $scForm = New-Object System.Windows.Forms.Form
+    $scForm.SuspendLayout()
+    $scForm.AutoScaleDimensions = New-Object System.Drawing.SizeF(96, 96)
+    $scForm.AutoScaleMode       = [System.Windows.Forms.AutoScaleMode]::Dpi
+    $scForm.Font                = $fontUi
+    $scForm.Text                = 'PowerShell Desktop Shortcut Creator'
+    $scForm.Size                = New-Object System.Drawing.Size(610, 575)
+    $scForm.MinimumSize         = New-Object System.Drawing.Size(460, 380)
+    $scForm.StartPosition       = 'CenterParent'
+    $scForm.FormBorderStyle     = 'Sizable'
+    $scForm.MaximizeBox         = $false
+    $scForm.MinimizeBox         = $false
+    $scForm.BackColor           = $p.BgMain
+    $scForm.ForeColor           = $p.FgPrimary
+
+    $scForm.Add_Load({
+        $wa   = [System.Windows.Forms.Screen]::FromControl($scForm).WorkingArea
+        $maxW = [Math]::Max(420, $wa.Width - 20)
+        $maxH = [Math]::Max(340, $wa.Height - 20)
+
+        $scForm.PerformLayout()
+        $availW = [Math]::Max(200, $scPnlScroll.ClientSize.Width - $scPnlScroll.Padding.Horizontal)
+        $scTlpMain.MaximumSize = New-Object System.Drawing.Size($availW, 0)
+        $scForm.PerformLayout()
+
+        $needScrollH = $scTlpMain.Height + $scPnlScroll.Padding.Vertical
+        $overflow    = $needScrollH - $scPnlScroll.ClientSize.Height
+        $targetH     = if ($overflow -gt 0) { $scForm.Height + $overflow + 6 } else { $scForm.Height }
+
+        $scForm.MinimumSize = New-Object System.Drawing.Size(
+            [Math]::Min($scForm.MinimumSize.Width, $maxW),
+            [Math]::Min($scForm.MinimumSize.Height, $maxH)
+        )
+        $scForm.Size = New-Object System.Drawing.Size(
+            [Math]::Min($scForm.Width, $maxW),
+            [Math]::Min($targetH, $maxH)
+        )
+    })
 
     $scForm.Add_Shown({
         if ($script:HasWin32) {
@@ -2087,144 +2148,380 @@ function Show-DesktopShortcutDialog {
         }
     })
 
-    $scLblScript = New-Object System.Windows.Forms.Label -Property @{
-        Text = 'PowerShell Script (.ps1):'; Location = New-Object System.Drawing.Point(20, 16); AutoSize = $true; ForeColor = $p.FgPrimary
-    }
-    $scTxtScript = New-Object System.Windows.Forms.TextBox -Property @{
-        Location = New-Object System.Drawing.Point(20, 38); Size = New-Object System.Drawing.Size(435, 25); BorderStyle = 'FixedSingle'
-        BackColor = $p.BgInput; ForeColor = $p.FgPrimary
-    }
-    $scBtnBrowse = New-Object System.Windows.Forms.Button -Property @{
-        Text = 'Browse...'; Location = New-Object System.Drawing.Point(463, 37); Size = New-Object System.Drawing.Size(83, 26); FlatStyle = 'Flat'; Cursor = 'Hand'
-        BackColor = $p.BtnSecondary; ForeColor = $p.FgPrimary
-    }
+    # --- Zone 1 (Very Bottom): Status & Action Buttons ---
+    $scPnlBottom = New-Object System.Windows.Forms.TableLayoutPanel
+    $scPnlBottom.Dock = 'Bottom'
+    $scPnlBottom.AutoSize = $true
+    $scPnlBottom.AutoSizeMode = 'GrowAndShrink'
+    $scPnlBottom.ColumnCount = 2
+    $scPnlBottom.RowCount = 1
+    $scPnlBottom.Padding = New-Object System.Windows.Forms.Padding(16, 6, 16, 10)
+    $scPnlBottom.BackColor = $p.BgMain
+    [void]$scPnlBottom.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$scPnlBottom.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    [void]$scPnlBottom.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    $scForm.Controls.Add($scPnlBottom)
+
+    $scLblStatus = New-Object System.Windows.Forms.Label
+    $scLblStatus.Text = 'Ready to create Desktop shortcut.'
+    $scLblStatus.Dock = 'Fill'
+    $scLblStatus.TextAlign = 'MiddleLeft'
+    $scLblStatus.ForeColor = $p.FgSecondary
+    $scLblStatus.Margin = New-Object System.Windows.Forms.Padding(0, 2, 8, 2)
+    $scPnlBottom.Controls.Add($scLblStatus, 0, 0)
+
+    $scFlpBottomBtns = New-Object System.Windows.Forms.FlowLayoutPanel
+    $scFlpBottomBtns.Dock = 'Right'
+    $scFlpBottomBtns.AutoSize = $true
+    $scFlpBottomBtns.AutoSizeMode = 'GrowAndShrink'
+    $scFlpBottomBtns.WrapContents = $false
+    $scFlpBottomBtns.Margin = New-Object System.Windows.Forms.Padding(0)
+    $scPnlBottom.Controls.Add($scFlpBottomBtns, 1, 0)
+
+    $scBtnCreate = New-Object System.Windows.Forms.Button
+    $scBtnCreate.Text = 'Create Shortcut'
+    $scBtnCreate.Size = New-Object System.Drawing.Size(124, 32)
+    $scBtnCreate.FlatStyle = 'Flat'
+    $scBtnCreate.Cursor = 'Hand'
+    $scBtnCreate.BackColor = $p.Accent
+    $scBtnCreate.ForeColor = [System.Drawing.Color]::White
+    $scBtnCreate.Font = $fontUiBold
+    $scBtnCreate.FlatAppearance.BorderSize = 0
+    $scBtnCreate.Margin = New-Object System.Windows.Forms.Padding(0, 0, 8, 0)
+    $scFlpBottomBtns.Controls.Add($scBtnCreate)
+
+    $scBtnClose = New-Object System.Windows.Forms.Button
+    $scBtnClose.Text = 'Close'
+    $scBtnClose.Size = New-Object System.Drawing.Size(76, 32)
+    $scBtnClose.FlatStyle = 'Flat'
+    $scBtnClose.Cursor = 'Hand'
+    $scBtnClose.BackColor = $p.BtnSecondary
+    $scBtnClose.ForeColor = $p.FgPrimary
+    $scBtnClose.FlatAppearance.BorderColor = $p.Border
+    $scBtnClose.Margin = New-Object System.Windows.Forms.Padding(0)
+    $scFlpBottomBtns.Controls.Add($scBtnClose)
+
+    # --- Zone 2 (Pinned Above Bottom Bar): Command Preview Scroll Box ---
+    $scPnlPreview = New-Object System.Windows.Forms.Panel
+    $scPnlPreview.Dock = 'Bottom'
+    $scPnlPreview.Height = 74
+    $scPnlPreview.Padding = New-Object System.Windows.Forms.Padding(16, 4, 16, 4)
+    $scPnlPreview.BackColor = $p.BgMain
+    $scForm.Controls.Add($scPnlPreview)
+
+    $scTxtPreview = New-Object System.Windows.Forms.TextBox
+    $scTxtPreview.Dock = 'Fill'
+    $scTxtPreview.Multiline = $true
+    $scTxtPreview.ReadOnly = $true
+    $scTxtPreview.ScrollBars = 'Vertical'
+    $scTxtPreview.BorderStyle = 'FixedSingle'
+    $scTxtPreview.Font = $fontMono
+    $scTxtPreview.BackColor = $p.BgLog
+    $scTxtPreview.ForeColor = $p.FgSecondary
+    $scPnlPreview.Controls.Add($scTxtPreview)
+
+    $scLblPreview = New-Object System.Windows.Forms.Label
+    $scLblPreview.Text = 'Shortcut Target Command Preview:'
+    $scLblPreview.Dock = 'Top'
+    $scLblPreview.AutoSize = $true
+    $scLblPreview.Padding = New-Object System.Windows.Forms.Padding(0, 0, 0, 3)
+    $scLblPreview.ForeColor = $p.FgPrimary
+    $scPnlPreview.Controls.Add($scLblPreview)
+    $scTxtPreview.BringToFront()
+
+    # --- Zone 3 (Scrollable Middle Body): Inputs & Launch Options ---
+    $scPnlScroll = New-Object System.Windows.Forms.Panel
+    $scPnlScroll.Dock = 'Fill'
+    $scPnlScroll.AutoScroll = $true
+    $scPnlScroll.Padding = New-Object System.Windows.Forms.Padding(16, 10, 16, 4)
+    $scPnlScroll.BackColor = $p.BgMain
+    $scForm.Controls.Add($scPnlScroll)
+
+    # Enforce exact dock order: Bottom at very bottom, Preview above it, Scroll filling the rest
+    $scPnlBottom.SendToBack()
+    $scPnlScroll.BringToFront()
+
+    $scTlpMain = New-Object System.Windows.Forms.TableLayoutPanel
+    $scTlpMain.Dock = 'Top'
+    $scTlpMain.AutoSize = $true
+    $scTlpMain.AutoSizeMode = 'GrowAndShrink'
+    $scTlpMain.ColumnCount = 1
+    $scTlpMain.BackColor = $p.BgMain
+    [void]$scTlpMain.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    $scPnlScroll.Controls.Add($scTlpMain)
+
+    $scPnlScroll.Add_SizeChanged({
+        $avail = [Math]::Max(200, $scPnlScroll.ClientSize.Width - $scPnlScroll.Padding.Horizontal)
+        $scTlpMain.MaximumSize = New-Object System.Drawing.Size($avail, 0)
+    })
+
+    # 1. Script File Row
+    $scLblScript = New-Object System.Windows.Forms.Label
+    $scLblScript.Text = 'PowerShell Script (.ps1):'
+    $scLblScript.AutoSize = $true
+    $scLblScript.ForeColor = $p.FgPrimary
+    $scLblScript.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 2)
+    $scTlpMain.Controls.Add($scLblScript)
+
+    $scTlpScript = New-Object System.Windows.Forms.TableLayoutPanel
+    $scTlpScript.Dock = 'Top'
+    $scTlpScript.AutoSize = $true
+    $scTlpScript.AutoSizeMode = 'GrowAndShrink'
+    $scTlpScript.ColumnCount = 2
+    $scTlpScript.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 6)
+    [void]$scTlpScript.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$scTlpScript.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    $scTlpMain.Controls.Add($scTlpScript)
+
+    $scTxtScript = New-Object System.Windows.Forms.TextBox
+    $scTxtScript.Dock = 'Fill'
+    $scTxtScript.BorderStyle = 'FixedSingle'
+    $scTxtScript.BackColor = $p.BgInput
+    $scTxtScript.ForeColor = $p.FgPrimary
+    $scTxtScript.Margin = New-Object System.Windows.Forms.Padding(0, 1, 8, 1)
+    $scTlpScript.Controls.Add($scTxtScript, 0, 0)
+
+    $scBtnBrowse = New-Object System.Windows.Forms.Button
+    $scBtnBrowse.Text = 'Browse...'
+    $scBtnBrowse.Size = New-Object System.Drawing.Size(88, 26)
+    $scBtnBrowse.FlatStyle = 'Flat'
+    $scBtnBrowse.Cursor = 'Hand'
+    $scBtnBrowse.BackColor = $p.BtnSecondary
+    $scBtnBrowse.ForeColor = $p.FgPrimary
     $scBtnBrowse.FlatAppearance.BorderColor = $p.Border
+    $scBtnBrowse.Margin = New-Object System.Windows.Forms.Padding(0)
+    $scTlpScript.Controls.Add($scBtnBrowse, 1, 0)
 
-    $scLblName = New-Object System.Windows.Forms.Label -Property @{
-        Text = 'Desktop Shortcut Name:'; Location = New-Object System.Drawing.Point(20, 74); AutoSize = $true; ForeColor = $p.FgPrimary
-    }
-    $scTxtName = New-Object System.Windows.Forms.TextBox -Property @{
-        Location = New-Object System.Drawing.Point(20, 96); Size = New-Object System.Drawing.Size(526, 25); BorderStyle = 'FixedSingle'
-        BackColor = $p.BgInput; ForeColor = $p.FgPrimary
-    }
+    # 2. Shortcut Name Row
+    $scLblName = New-Object System.Windows.Forms.Label
+    $scLblName.Text = 'Desktop Shortcut Name:'
+    $scLblName.AutoSize = $true
+    $scLblName.ForeColor = $p.FgPrimary
+    $scLblName.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 2)
+    $scTlpMain.Controls.Add($scLblName)
 
-    $scLblIcon = New-Object System.Windows.Forms.Label -Property @{
-        Text = 'Shortcut Icon (.ico, .exe, .dll):'; Location = New-Object System.Drawing.Point(20, 132); AutoSize = $true; ForeColor = $p.FgPrimary
-    }
-    $scPnlIcon = New-Object System.Windows.Forms.Panel -Property @{
-        Location = New-Object System.Drawing.Point(20, 154); Size = New-Object System.Drawing.Size(42, 42); BorderStyle = 'FixedSingle'; BackColor = $p.BgInput
-    }
-    $scPicIcon = New-Object System.Windows.Forms.PictureBox -Property @{
-        Location = New-Object System.Drawing.Point(4, 4); Size = New-Object System.Drawing.Size(32, 32); SizeMode = 'Zoom'
-    }
+    $scTxtName = New-Object System.Windows.Forms.TextBox
+    $scTxtName.Dock = 'Top'
+    $scTxtName.BorderStyle = 'FixedSingle'
+    $scTxtName.BackColor = $p.BgInput
+    $scTxtName.ForeColor = $p.FgPrimary
+    $scTxtName.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 6)
+    $scTlpMain.Controls.Add($scTxtName)
+
+    # 3. Shortcut Icon Row
+    $scLblIcon = New-Object System.Windows.Forms.Label
+    $scLblIcon.Text = 'Shortcut Icon (.ico, .exe, .dll):'
+    $scLblIcon.AutoSize = $true
+    $scLblIcon.ForeColor = $p.FgPrimary
+    $scLblIcon.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 2)
+    $scTlpMain.Controls.Add($scLblIcon)
+
+    $scTlpIcon = New-Object System.Windows.Forms.TableLayoutPanel
+    $scTlpIcon.Dock = 'Top'
+    $scTlpIcon.AutoSize = $true
+    $scTlpIcon.AutoSizeMode = 'GrowAndShrink'
+    $scTlpIcon.ColumnCount = 3
+    $scTlpIcon.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 8)
+    [void]$scTlpIcon.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    [void]$scTlpIcon.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$scTlpIcon.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    $scTlpMain.Controls.Add($scTlpIcon)
+
+    $scPnlIcon = New-Object System.Windows.Forms.Panel
+    $scPnlIcon.Size = New-Object System.Drawing.Size(42, 42)
+    $scPnlIcon.BorderStyle = 'FixedSingle'
+    $scPnlIcon.BackColor = $p.BgInput
+    $scPnlIcon.Margin = New-Object System.Windows.Forms.Padding(0, 0, 8, 0)
+    $scTlpIcon.Controls.Add($scPnlIcon, 0, 0)
+
+    $scPicIcon = New-Object System.Windows.Forms.PictureBox
+    $scPicIcon.Location = New-Object System.Drawing.Point(4, 4)
+    $scPicIcon.Size = New-Object System.Drawing.Size(32, 32)
+    $scPicIcon.SizeMode = 'Zoom'
     $scPnlIcon.Controls.Add($scPicIcon)
 
-    $scTxtIcon = New-Object System.Windows.Forms.TextBox -Property @{
-        Location = New-Object System.Drawing.Point(70, 162); Size = New-Object System.Drawing.Size(228, 25); Text = $ps5IconSpec; BorderStyle = 'FixedSingle'
-        BackColor = $p.BgInput; ForeColor = $p.FgPrimary
-    }
-    $scBtnIcon = New-Object System.Windows.Forms.Button -Property @{
-        Text = 'Choose Icon...'; Location = New-Object System.Drawing.Point(304, 161); Size = New-Object System.Drawing.Size(88, 26); FlatStyle = 'Flat'; Cursor = 'Hand'
-        BackColor = $p.BtnSecondary; ForeColor = $p.FgPrimary
-    }
+    $scTxtIcon = New-Object System.Windows.Forms.TextBox
+    $scTxtIcon.Dock = 'Fill'
+    $scTxtIcon.Text = $ps5IconSpec
+    $scTxtIcon.BorderStyle = 'FixedSingle'
+    $scTxtIcon.BackColor = $p.BgInput
+    $scTxtIcon.ForeColor = $p.FgPrimary
+    $scTxtIcon.Margin = New-Object System.Windows.Forms.Padding(0, 9, 8, 8)
+    $scTlpIcon.Controls.Add($scTxtIcon, 1, 0)
+
+    $scFlpIconBtns = New-Object System.Windows.Forms.FlowLayoutPanel
+    $scFlpIconBtns.AutoSize = $true
+    $scFlpIconBtns.AutoSizeMode = 'GrowAndShrink'
+    $scFlpIconBtns.WrapContents = $false
+    $scFlpIconBtns.Margin = New-Object System.Windows.Forms.Padding(0, 7, 0, 0)
+    $scTlpIcon.Controls.Add($scFlpIconBtns, 2, 0)
+
+    $scBtnIcon = New-Object System.Windows.Forms.Button
+    $scBtnIcon.Text = 'Choose Icon...'
+    $scBtnIcon.Size = New-Object System.Drawing.Size(98, 27)
+    $scBtnIcon.FlatStyle = 'Flat'
+    $scBtnIcon.Cursor = 'Hand'
+    $scBtnIcon.BackColor = $p.BtnSecondary
+    $scBtnIcon.ForeColor = $p.FgPrimary
     $scBtnIcon.FlatAppearance.BorderColor = $p.Border
+    $scBtnIcon.Margin = New-Object System.Windows.Forms.Padding(0, 0, 4, 0)
+    $scFlpIconBtns.Controls.Add($scBtnIcon)
 
-    $scBtnWinIcon = New-Object System.Windows.Forms.Button -Property @{
-        Text = 'Windows Icons...'; Location = New-Object System.Drawing.Point(396, 161); Size = New-Object System.Drawing.Size(94, 26); FlatStyle = 'Flat'; Cursor = 'Hand'
-        BackColor = $p.BtnSecondary; ForeColor = $p.FgPrimary
-    }
+    $scBtnWinIcon = New-Object System.Windows.Forms.Button
+    $scBtnWinIcon.Text = 'Windows Icons...'
+    $scBtnWinIcon.Size = New-Object System.Drawing.Size(110, 27)
+    $scBtnWinIcon.FlatStyle = 'Flat'
+    $scBtnWinIcon.Cursor = 'Hand'
+    $scBtnWinIcon.BackColor = $p.BtnSecondary
+    $scBtnWinIcon.ForeColor = $p.FgPrimary
     $scBtnWinIcon.FlatAppearance.BorderColor = $p.Border
+    $scBtnWinIcon.Margin = New-Object System.Windows.Forms.Padding(0, 0, 4, 0)
+    $scFlpIconBtns.Controls.Add($scBtnWinIcon)
 
-    $scBtnResetIcon = New-Object System.Windows.Forms.Button -Property @{
-        Text = 'Reset'; Location = New-Object System.Drawing.Point(494, 161); Size = New-Object System.Drawing.Size(52, 26); FlatStyle = 'Flat'; Cursor = 'Hand'
-        BackColor = $p.BtnSecondary; ForeColor = $p.FgPrimary
-    }
+    $scBtnResetIcon = New-Object System.Windows.Forms.Button
+    $scBtnResetIcon.Text = 'Reset'
+    $scBtnResetIcon.Size = New-Object System.Drawing.Size(56, 27)
+    $scBtnResetIcon.FlatStyle = 'Flat'
+    $scBtnResetIcon.Cursor = 'Hand'
+    $scBtnResetIcon.BackColor = $p.BtnSecondary
+    $scBtnResetIcon.ForeColor = $p.FgPrimary
     $scBtnResetIcon.FlatAppearance.BorderColor = $p.Border
+    $scBtnResetIcon.Margin = New-Object System.Windows.Forms.Padding(0)
+    $scFlpIconBtns.Controls.Add($scBtnResetIcon)
 
-    $scGrpOpts = New-Object System.Windows.Forms.GroupBox -Property @{
-        Text = 'PowerShell Launch Options'; Location = New-Object System.Drawing.Point(20, 210); Size = New-Object System.Drawing.Size(526, 166)
-        BackColor = $p.BgPanel; ForeColor = $p.FgPrimary
-    }
+    # 4. Launch Options GroupBox
+    $scGrpOpts = New-Object System.Windows.Forms.GroupBox
+    $scGrpOpts.Text = 'PowerShell Launch Options'
+    $scGrpOpts.Dock = 'Top'
+    $scGrpOpts.AutoSize = $true
+    $scGrpOpts.AutoSizeMode = 'GrowAndShrink'
+    $scGrpOpts.Padding = New-Object System.Windows.Forms.Padding(12, 20, 12, 8)
+    $scGrpOpts.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 2)
+    $scGrpOpts.BackColor = $p.BgPanel
+    $scGrpOpts.ForeColor = $p.FgPrimary
     Initialize-ThemedGroupBox -GroupBox $scGrpOpts
+    $scTlpMain.Controls.Add($scGrpOpts)
 
-    $scLblMode = New-Object System.Windows.Forms.Label -Property @{
-        Text = 'PowerShell Mode:'; Location = New-Object System.Drawing.Point(16, 29); AutoSize = $true; ForeColor = $p.FgPrimary
-    }
-    $scCmbMode = New-Object System.Windows.Forms.ComboBox -Property @{
-        Location = New-Object System.Drawing.Point(132, 25); Size = New-Object System.Drawing.Size(204, 25); DropDownStyle = 'DropDownList'
-        BackColor = $p.BgInput; ForeColor = $p.FgPrimary
-    }
+    $scTlpOpts = New-Object System.Windows.Forms.TableLayoutPanel
+    $scTlpOpts.Dock = 'Top'
+    $scTlpOpts.AutoSize = $true
+    $scTlpOpts.AutoSizeMode = 'GrowAndShrink'
+    $scTlpOpts.ColumnCount = 1
+    $scTlpOpts.BackColor = $p.BgPanel
+    [void]$scTlpOpts.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    $scGrpOpts.Controls.Add($scTlpOpts)
+
+    $scFlpModeRow = New-Object System.Windows.Forms.FlowLayoutPanel
+    $scFlpModeRow.Dock = 'Top'
+    $scFlpModeRow.AutoSize = $true
+    $scFlpModeRow.AutoSizeMode = 'GrowAndShrink'
+    $scFlpModeRow.WrapContents = $true
+    $scFlpModeRow.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 4)
+    $scTlpOpts.Controls.Add($scFlpModeRow)
+
+    $scLblMode = New-Object System.Windows.Forms.Label
+    $scLblMode.Text = 'PowerShell Mode:'
+    $scLblMode.AutoSize = $true
+    $scLblMode.ForeColor = $p.FgPrimary
+    $scLblMode.Margin = New-Object System.Windows.Forms.Padding(0, 5, 8, 2)
+    $scFlpModeRow.Controls.Add($scLblMode)
+
+    $scCmbMode = New-Object System.Windows.Forms.ComboBox
+    $scCmbMode.Size = New-Object System.Drawing.Size(212, 25)
+    $scCmbMode.DropDownStyle = 'DropDownList'
+    $scCmbMode.BackColor = $p.BgInput
+    $scCmbMode.ForeColor = $p.FgPrimary
+    $scCmbMode.Margin = New-Object System.Windows.Forms.Padding(0, 1, 10, 2)
     [void]$scCmbMode.Items.AddRange(@('PowerShell 5.1 (powershell.exe)', 'PowerShell 7.x (pwsh.exe)'))
     $savedMode = if ($null -ne $script:Config -and ($script:Config.PSObject.Properties.Name -contains 'DefaultShortcutPsMode')) {
         [string]$script:Config.DefaultShortcutPsMode
     } else { '5.1' }
     $scCmbMode.SelectedIndex = if ($savedMode -eq '7.x') { 1 } else { 0 }
     Initialize-ThemedComboBox -ComboBox $scCmbMode
+    $scFlpModeRow.Controls.Add($scCmbMode)
 
-    $scLblModeStatus = New-Object System.Windows.Forms.Label -Property @{
-        Text = ''; Location = New-Object System.Drawing.Point(344, 29); Size = New-Object System.Drawing.Size(172, 20); ForeColor = $p.FgSecondary
-    }
+    $scLblModeStatus = New-Object System.Windows.Forms.Label
+    $scLblModeStatus.Text = ''
+    $scLblModeStatus.AutoSize = $true
+    $scLblModeStatus.ForeColor = $p.FgSecondary
+    $scLblModeStatus.Margin = New-Object System.Windows.Forms.Padding(0, 5, 0, 2)
+    $scFlpModeRow.Controls.Add($scLblModeStatus)
 
-    $scChkRunAs = New-Object System.Windows.Forms.CheckBox -Property @{
-        Text = 'Run as Administrator (UAC prompt on launch)'; Location = New-Object System.Drawing.Point(16, 60); AutoSize = $true; ForeColor = $p.FgPrimary
-    }
-    $scChkNoExit = New-Object System.Windows.Forms.CheckBox -Property @{
-        Text = 'Keep PowerShell window open after script finishes (-NoExit)'; Location = New-Object System.Drawing.Point(16, 86); AutoSize = $true; ForeColor = $p.FgPrimary
-    }
-    $scChkBypass = New-Object System.Windows.Forms.CheckBox -Property @{
-        Text = 'Bypass Execution Policy (-ExecutionPolicy Bypass)'; Location = New-Object System.Drawing.Point(16, 112); Checked = $true; AutoSize = $true; ForeColor = $p.FgPrimary
-    }
-    $scLblWin = New-Object System.Windows.Forms.Label -Property @{
-        Text = 'Window:'; Location = New-Object System.Drawing.Point(346, 62); AutoSize = $true; ForeColor = $p.FgPrimary
-    }
-    $scCmbWin = New-Object System.Windows.Forms.ComboBox -Property @{
-        Location = New-Object System.Drawing.Point(404, 58); Size = New-Object System.Drawing.Size(106, 25); DropDownStyle = 'DropDownList'
-        BackColor = $p.BgInput; ForeColor = $p.FgPrimary
-    }
+    $scFlpRunAsRow = New-Object System.Windows.Forms.FlowLayoutPanel
+    $scFlpRunAsRow.Dock = 'Top'
+    $scFlpRunAsRow.AutoSize = $true
+    $scFlpRunAsRow.AutoSizeMode = 'GrowAndShrink'
+    $scFlpRunAsRow.WrapContents = $true
+    $scFlpRunAsRow.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 2)
+    $scTlpOpts.Controls.Add($scFlpRunAsRow)
+
+    $scChkRunAs = New-Object System.Windows.Forms.CheckBox
+    $scChkRunAs.Text = 'Run as Administrator (UAC prompt on launch)'
+    $scChkRunAs.AutoSize = $true
+    $scChkRunAs.ForeColor = $p.FgPrimary
+    $scChkRunAs.Margin = New-Object System.Windows.Forms.Padding(0, 4, 14, 2)
+    $scFlpRunAsRow.Controls.Add($scChkRunAs)
+
+    $scLblWin = New-Object System.Windows.Forms.Label
+    $scLblWin.Text = 'Window:'
+    $scLblWin.AutoSize = $true
+    $scLblWin.ForeColor = $p.FgPrimary
+    $scLblWin.Margin = New-Object System.Windows.Forms.Padding(0, 5, 6, 2)
+    $scFlpRunAsRow.Controls.Add($scLblWin)
+
+    $scCmbWin = New-Object System.Windows.Forms.ComboBox
+    $scCmbWin.Size = New-Object System.Drawing.Size(108, 25)
+    $scCmbWin.DropDownStyle = 'DropDownList'
+    $scCmbWin.BackColor = $p.BgInput
+    $scCmbWin.ForeColor = $p.FgPrimary
+    $scCmbWin.Margin = New-Object System.Windows.Forms.Padding(0, 1, 0, 2)
     [void]$scCmbWin.Items.AddRange(@('Normal', 'Minimized', 'Maximized', 'Hidden'))
     $scCmbWin.SelectedIndex = 3
     Initialize-ThemedComboBox -ComboBox $scCmbWin
+    $scFlpRunAsRow.Controls.Add($scCmbWin)
 
-    $scLblArgs = New-Object System.Windows.Forms.Label -Property @{
-        Text = 'Script Arguments (optional):'; Location = New-Object System.Drawing.Point(16, 138); AutoSize = $true; ForeColor = $p.FgPrimary
-    }
-    $scTxtArgs = New-Object System.Windows.Forms.TextBox -Property @{
-        Location = New-Object System.Drawing.Point(180, 135); Size = New-Object System.Drawing.Size(330, 23); BorderStyle = 'FixedSingle'
-        BackColor = $p.BgInput; ForeColor = $p.FgPrimary
-    }
-    $scGrpOpts.Controls.AddRange(@(
-        $scLblMode, $scCmbMode, $scLblModeStatus,
-        $scChkRunAs, $scChkNoExit, $scChkBypass, $scLblWin, $scCmbWin, $scLblArgs, $scTxtArgs
-    ))
+    $scChkNoExit = New-Object System.Windows.Forms.CheckBox
+    $scChkNoExit.Text = 'Keep PowerShell window open after script finishes (-NoExit)'
+    $scChkNoExit.AutoSize = $true
+    $scChkNoExit.ForeColor = $p.FgPrimary
+    $scChkNoExit.Margin = New-Object System.Windows.Forms.Padding(0, 1, 0, 2)
+    $scTlpOpts.Controls.Add($scChkNoExit)
 
-    $scLblPreview = New-Object System.Windows.Forms.Label -Property @{
-        Text = 'Shortcut Target Command Preview:'; Location = New-Object System.Drawing.Point(20, 386); AutoSize = $true; ForeColor = $p.FgPrimary
-    }
-    $scTxtPreview = New-Object System.Windows.Forms.TextBox -Property @{
-        Location = New-Object System.Drawing.Point(20, 408); Size = New-Object System.Drawing.Size(526, 42); Multiline = $true; ReadOnly = $true
-        BorderStyle = 'FixedSingle'; Font = $fontMono; BackColor = $p.BgLog; ForeColor = $p.FgSecondary
-    }
-    $scLblStatus = New-Object System.Windows.Forms.Label -Property @{
-        Text = 'Ready to create Desktop shortcut.'; Location = New-Object System.Drawing.Point(20, 464); Size = New-Object System.Drawing.Size(330, 34); ForeColor = $p.FgSecondary
-    }
-    $scBtnCreate = New-Object System.Windows.Forms.Button -Property @{
-        Text = 'Create Shortcut'; Location = New-Object System.Drawing.Point(358, 460); Size = New-Object System.Drawing.Size(112, 32); FlatStyle = 'Flat'; Cursor = 'Hand'
-        BackColor = $p.Accent; ForeColor = [System.Drawing.Color]::White; Font = $fontUiBold
-    }
-    $scBtnCreate.FlatAppearance.BorderSize = 0
+    $scChkBypass = New-Object System.Windows.Forms.CheckBox
+    $scChkBypass.Text = 'Bypass Execution Policy (-ExecutionPolicy Bypass)'
+    $scChkBypass.Checked = $true
+    $scChkBypass.AutoSize = $true
+    $scChkBypass.ForeColor = $p.FgPrimary
+    $scChkBypass.Margin = New-Object System.Windows.Forms.Padding(0, 1, 0, 4)
+    $scTlpOpts.Controls.Add($scChkBypass)
 
-    $scBtnClose = New-Object System.Windows.Forms.Button -Property @{
-        Text = 'Close'; Location = New-Object System.Drawing.Point(476, 460); Size = New-Object System.Drawing.Size(70, 32); FlatStyle = 'Flat'; Cursor = 'Hand'
-        BackColor = $p.BtnSecondary; ForeColor = $p.FgPrimary
-    }
-    $scBtnClose.FlatAppearance.BorderColor = $p.Border
+    $scTlpArgs = New-Object System.Windows.Forms.TableLayoutPanel
+    $scTlpArgs.Dock = 'Top'
+    $scTlpArgs.AutoSize = $true
+    $scTlpArgs.AutoSizeMode = 'GrowAndShrink'
+    $scTlpArgs.ColumnCount = 2
+    $scTlpArgs.Margin = New-Object System.Windows.Forms.Padding(0)
+    [void]$scTlpArgs.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    [void]$scTlpArgs.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    $scTlpOpts.Controls.Add($scTlpArgs)
 
-    $scForm.Controls.AddRange(@(
-        $scLblScript, $scTxtScript, $scBtnBrowse,
-        $scLblName, $scTxtName,
-        $scLblIcon, $scPnlIcon, $scTxtIcon, $scBtnIcon, $scBtnWinIcon, $scBtnResetIcon,
-        $scGrpOpts, $scLblPreview, $scTxtPreview, $scLblStatus, $scBtnCreate, $scBtnClose
-    ))
+    $scLblArgs = New-Object System.Windows.Forms.Label
+    $scLblArgs.Text = 'Script Arguments (optional):'
+    $scLblArgs.AutoSize = $true
+    $scLblArgs.ForeColor = $p.FgPrimary
+    $scLblArgs.Margin = New-Object System.Windows.Forms.Padding(0, 4, 8, 2)
+    $scTlpArgs.Controls.Add($scLblArgs, 0, 0)
+
+    $scTxtArgs = New-Object System.Windows.Forms.TextBox
+    $scTxtArgs.Dock = 'Fill'
+    $scTxtArgs.BorderStyle = 'FixedSingle'
+    $scTxtArgs.BackColor = $p.BgInput
+    $scTxtArgs.ForeColor = $p.FgPrimary
+    $scTxtArgs.Margin = New-Object System.Windows.Forms.Padding(0, 1, 0, 1)
+    $scTlpArgs.Controls.Add($scTxtArgs, 1, 0)
+
+    $scForm.ResumeLayout($false)
+    $scForm.PerformLayout()
 
     $getDefaultIconForMode = {
         if ($scCmbMode.SelectedIndex -eq 1) {
@@ -2366,7 +2663,6 @@ function Show-DesktopShortcutDialog {
         $installWork = {
             [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-            # 1. Try winget first when available
             $wingetCmd = Get-Command -Name 'winget.exe' -ErrorAction SilentlyContinue
             if ($null -ne $wingetCmd) {
                 $wgArgs = 'install --id Microsoft.PowerShell --source winget --accept-package-agreements --accept-source-agreements --silent'
@@ -2376,7 +2672,6 @@ function Show-DesktopShortcutDialog {
                 }
             }
 
-            # 2. Fallback: Download latest official PowerShell 7 MSI from GitHub and install
             $arch    = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'win-arm64.msi' } else { 'win-x64.msi' }
             $headers = @{ 'User-Agent' = 'PSGallery-Manager' }
             $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/PowerShell/PowerShell/releases/latest' -Headers $headers -TimeoutSec 25 -ErrorAction Stop
@@ -2432,7 +2727,6 @@ function Show-DesktopShortcutDialog {
                 return
             }
 
-            # Upgrade default PS 5.1 icon to the new PS 7 icon if user hadn't chosen a custom icon
             $finalIconSpec = $st.IconSpec
             if ([string]::IsNullOrWhiteSpace($finalIconSpec) -or ($finalIconSpec -ieq $ps5IconSpec)) {
                 $finalIconSpec = "$($installedInfo.IconPath),0"
@@ -2530,7 +2824,6 @@ function Show-DesktopShortcutDialog {
         }
     }
 
-    # Opens the icon picker on the active PowerShell .exe (PS 7 or PS 5.1) or current custom icon file
     $scBtnIcon.Add_Click({
         $parsed   = & $resolveIcon $scTxtIcon.Text
         $fallback = if ($scCmbMode.SelectedIndex -eq 1 -and (Get-Pwsh7Info)) { (Get-Pwsh7Info).IconPath } else { $ps5ExePath }
@@ -2539,7 +2832,6 @@ function Show-DesktopShortcutDialog {
         & $openIconPickerForFile $seedFile $seedIdx
     })
 
-    # Opens the standard built-in Windows shell32.dll icon gallery directly
     $scBtnWinIcon.Add_Click({
         & $openIconPickerForFile $winShellDll 0
     })
@@ -2589,7 +2881,6 @@ function Show-DesktopShortcutDialog {
                 if ($ow -ne 'Yes') { return }
             }
 
-            # PowerShell 5.1 Mode
             if ($scCmbMode.SelectedIndex -eq 0) {
                 & $writeShortcutFile $ps5ExePath $shortcutPath $scriptPath $iconInfo.Spec 'PowerShell 5.1'
                 $scLblStatus.ForeColor = $p.Success
@@ -2597,7 +2888,6 @@ function Show-DesktopShortcutDialog {
                 return
             }
 
-            # PowerShell 7.x Mode
             $pwsh7Info = Get-Pwsh7Info
             if ($null -ne $pwsh7Info) {
                 & $writeShortcutFile $pwsh7Info.ExePath $shortcutPath $scriptPath $iconInfo.Spec 'PowerShell 7.x'
@@ -2606,7 +2896,6 @@ function Show-DesktopShortcutDialog {
                 return
             }
 
-            # PowerShell 7.x is not installed -> Ask user before installing, then create shortcut
             $ask = [System.Windows.Forms.MessageBox]::Show(
                 $scForm,
                 "PowerShell 7.x (pwsh.exe) is not currently installed on this PC.`n`nWould you like to download and install PowerShell 7 now, and then create '$cleanName.lnk'?",
@@ -3331,7 +3620,7 @@ function Update-HeaderStatusBadges {
     }
 }
 
-foreach ($cb in @($cmbTheme, $cmbCategory, $cmbItemType, $cmbSort, $cmbSetScope, $cmbPubRecent)) {
+foreach ($cb in @($cmbTheme, $cmbCategory, $cmbItemType, $cmbSort, $cmbSetScope, $cmbPubRecent, $cmbTargetLang)) {
     Initialize-ThemedComboBox -ComboBox $cb
 }
 foreach ($grp in @($grpPubTarget, $grpPubMeta)) {
@@ -3349,6 +3638,8 @@ function Apply-Theme {
     $form.ForeColor = $p.FgPrimary
 
     $pnlHeader.BackColor = $p.BgHeader
+    $pnlHeaderLeft.BackColor = $p.BgHeader
+    $pnlHeaderRight.BackColor = $p.BgHeader
     $lblAppTitle.ForeColor = $p.FgPrimary
     $lblThemeTitle.ForeColor = $p.FgSecondary
 
@@ -3385,7 +3676,7 @@ function Apply-Theme {
     $txtPubLog.BackColor = $p.BgLog
     $txtPubLog.ForeColor = $p.FgPrimary
 
-    foreach ($cb in @($cmbTheme, $cmbCategory, $cmbItemType, $cmbSort, $cmbSetScope, $cmbPubRecent)) {
+    foreach ($cb in @($cmbTheme, $cmbCategory, $cmbItemType, $cmbSort, $cmbSetScope, $cmbPubRecent, $cmbTargetLang)) {
         $cb.BackColor = $p.BgInput
         $cb.ForeColor = $p.FgPrimary
         if ($script:HasWin32 -and $cb.IsHandleCreated) {
@@ -3406,7 +3697,7 @@ function Apply-Theme {
         $btn.FlatAppearance.MouseOverBackColor = $p.AccentHover
     }
 
-    foreach ($btn in @($btnPrevPage, $btnNextPage, $btnDownloadPkg, $btnViewCode, $btnPubDownload, $btnPubInspect, $btnPubOpenWeb, $btnCheckUpdates, $btnUpdateLocal, $btnOpenLocalFolder, $btnEditLocal, $btnLocalShortcut, $btnToggleApi, $btnOpenApiKeysPage, $btnBrowseSave, $btnElevateNow, $btnShortcutDlgTop, $btnOpenShortcutTool, $btnPubClearRecent, $btnPubBrowse, $btnPubBumpMajor, $btnPubBumpMinor, $btnPubBumpPatch, $btnPubSaveAuthor, $btnPubSaveMeta, $btnPubCheckLive, $btnPubValidate, $btnPubRepairTls, $btnPubCancel, $btnPubClearLog)) {
+    foreach ($btn in @($btnPrevPage, $btnNextPage, $btnDownloadPkg, $btnViewCode, $btnTranslate, $btnPubDownload, $btnPubInspect, $btnPubOpenWeb, $btnCheckUpdates, $btnUpdateLocal, $btnOpenLocalFolder, $btnEditLocal, $btnLocalShortcut, $btnToggleApi, $btnOpenApiKeysPage, $btnBrowseSave, $btnElevateNow, $btnShortcutDlgTop, $btnOpenShortcutTool, $btnPubClearRecent, $btnPubBrowse, $btnPubBumpMajor, $btnPubBumpMinor, $btnPubBumpPatch, $btnPubSaveAuthor, $btnPubSaveMeta, $btnPubCheckLive, $btnPubValidate, $btnPubRepairTls, $btnPubCancel, $btnPubClearLog)) {
         $btn.FlatStyle = 'Flat'
         $btn.BackColor = $p.BtnSecondary
         $btn.ForeColor = $p.FgPrimary
@@ -3422,18 +3713,6 @@ function Apply-Theme {
         $btn.FlatAppearance.BorderColor = $p.Danger
         $btn.FlatAppearance.BorderSize = 1
         $btn.FlatAppearance.MouseOverBackColor = $p.BtnSecHover
-    }
-
-    foreach ($btn in @($btnPrevPage, $btnNextPage, $btnViewCode, $btnTranslate, $btnPubDownload, $btnPubInspect, $btnPubOpenWeb, $btnUpdateLocal, $btnOpenLocalFolder, $btnEditLocal, $btnLocalShortcut, $btnToggleApi, $btnOpenApiKeysPage, $btnBrowseSave, $btnOpenShortcutTool, $btnShortcutDlgTop, $btnPubClearRecent, $btnPubBrowse, $btnPubSaveAuthor, $btnPubSaveMeta, $btnPubCheckLive, $btnPubValidate, $btnPubRepairTls, $btnPubCancel, $btnPubClearLog)) {
-    $btn.BackColor = $p.BtnSecondary
-    $btn.ForeColor = $p.FgPrimary
-    $btn.FlatAppearance.BorderColor = $p.Border
-}
-
-    foreach ($cmb in @($cmbTheme, $cmbCategory, $cmbItemType, $cmbSort, $cmbSetScope, $cmbPubRecent, $cmbTargetLang)) {
-        $cmb.BackColor = $p.BgInput
-        $cmb.ForeColor = $p.FgPrimary
-        Initialize-ThemedComboBox -ComboBox $cmb
     }
 
     $ctxLocalMenu.BackColor = $p.BgPanel
@@ -3467,7 +3746,7 @@ function Apply-Theme {
         }
     }
 
-   foreach ($dgv in @($dgvGallery, $dgvPublished, $dgvLocal)) {
+    foreach ($dgv in @($dgvGallery, $dgvPublished, $dgvLocal)) {
         $dgv.BackgroundColor = $p.BgGrid
         $dgv.GridColor = $p.Border
         $dgv.DefaultCellStyle.BackColor = $p.BgGrid
@@ -3512,11 +3791,21 @@ function Show-CodeInspectorDialog {
     $p = Get-ThemePalette
 
     $dlg = New-Object Windows.Forms.Form
+    $dlg.SuspendLayout()
+    $dlg.AutoScaleDimensions = New-Object Drawing.SizeF(96, 96)
+    $dlg.AutoScaleMode = [Windows.Forms.AutoScaleMode]::Dpi
     $dlg.Text = "Code Inspector - $PackageId v$Version"
     $dlg.Size = New-Object Drawing.Size(920, 680)
+    $dlg.MinimumSize = New-Object Drawing.Size(560, 420)
     $dlg.StartPosition = 'CenterParent'
     $dlg.BackColor = $p.BgMain
     $dlg.ForeColor = $p.FgPrimary
+    $dlg.Add_Load({
+        $wa   = [System.Windows.Forms.Screen]::FromControl($dlg).WorkingArea
+        $maxW = [Math]::Max(560, $wa.Width - 20)
+        $maxH = [Math]::Max(420, $wa.Height - 20)
+        $dlg.Size = New-Object Drawing.Size([Math]::Min($dlg.Width, $maxW), [Math]::Min($dlg.Height, $maxH))
+    })
     $dlg.Add_Shown({
         if ($script:HasWin32) {
             try { [PSGalWin32]::SetDarkTitleBar($dlg.Handle, $p.IsDark) } catch { }
@@ -3556,6 +3845,8 @@ function Show-CodeInspectorDialog {
     $topBar.Controls.Add($btnSaveCodeAs)
 
     $txtCode.BringToFront()
+    $dlg.ResumeLayout($false)
+    $dlg.PerformLayout()
     [void]$dlg.ShowDialog($form)
 }
 
@@ -3735,9 +4026,8 @@ function Invoke-DownloadPackage {
     }
 }
 
-$script:SelectedGalleryPkgId = ''
-$script:DownloadCountCache   = @{}
-$script:SearchGeneration     = 0
+$script:DownloadCountCache = @{}
+$script:SearchGeneration   = 0
 
 function Invoke-GallerySearch {
     param([int]$PageIndex = 0)
@@ -3830,7 +4120,6 @@ function Invoke-GallerySearch {
         if ($items.Count -gt 0) { $dgvGallery.Rows[0].Selected = $true; Update-GalleryDetailsPane -Pkg $items[0] }
         else { Update-GalleryDetailsPane -Pkg $null }
 
-        # Sync exact FindPackagesById() counts for all uncached rows on this page so every sort order matches
         if ($uncachedIds.Count -gt 0) {
             $idBatch = @($uncachedIds)
             $hydrateWork = {
@@ -3889,9 +4178,9 @@ function Invoke-GallerySearch {
     }
 }
 
-$script:TranslationCache      = @{}
-$script:IsShowingTranslation  = $false
-$script:CurrentDetailsPkg     = $null
+$script:TranslationCache     = @{}
+$script:IsShowingTranslation = $false
+$script:CurrentDetailsPkg    = $null
 
 function Format-PackageDetailsBody {
     param(
@@ -4041,7 +4330,6 @@ function Invoke-TranslatePackageDetails {
                     continue
                 }
 
-                # Split very long single lines into <= 1200-char chunks so GET URLs stay safe
                 $chunks = New-Object System.Collections.Generic.List[string]
                 $remaining = $line
                 while ($remaining.Length -gt 1200) {
@@ -4252,7 +4540,6 @@ function Invoke-ScanLocalPackages {
             }
         }
 
-        # Scan both Windows PowerShell 5.1 and PowerShell 7.x script folders
         $scriptRoots = @(
             @{ Path = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'WindowsPowerShell\Scripts'); Scope = 'CurrentUser'; Edition = 'PS 5.1' },
             @{ Path = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell\Scripts');        Scope = 'CurrentUser'; Edition = 'PS 7.x' },
@@ -4347,7 +4634,8 @@ function Render-LocalGrid {
 
     foreach ($item in $Items) {
         $ed = if ($item.PSObject.Properties.Name -contains 'Edition') { $item.Edition } else { '' }
-        [void]$dgvLocal.Rows.Add($item.Name, $item.Type, $ed, $item.InstalledVersion, $item.LatestVersion, $item.Status, $item.Scope, $item.Location)
+        $rowIdx = $dgvLocal.Rows.Add($item.Name, $item.Type, $ed, $item.InstalledVersion, $item.LatestVersion, $item.Status, $item.Scope, $item.Location)
+        $dgvLocal.Rows[$rowIdx].Tag = $item
     }
 }
 
@@ -4553,13 +4841,23 @@ $btnCheckUpdates.Add_Click({
 })
 
 $btnUpdateLocal.Add_Click({
-    if ($dgvLocal.SelectedRows.Count -eq 0) { return }
-    $idx = $dgvLocal.SelectedRows[0].Index
-    if ($idx -lt 0 -or $idx -ge $script:CurrentLocalResults.Count) { return }
-    $item = $script:CurrentLocalResults[$idx]
+    $selRow = if ($dgvLocal.SelectedRows.Count -gt 0) { $dgvLocal.SelectedRows[0] } else { $dgvLocal.CurrentRow }
+    if ($null -eq $selRow) {
+        [Windows.Forms.MessageBox]::Show($form, 'Select an installed script or module from the list first.', 'No Item Selected', 'OK', 'Information') | Out-Null
+        return
+    }
+    $item = $selRow.Tag
+    if ($null -eq $item) {
+        $idx = $selRow.Index
+        if ($idx -lt 0 -or $idx -ge $script:CurrentLocalResults.Count) { return }
+        $item = $script:CurrentLocalResults[$idx]
+    }
 
-    if ($item.Scope -eq 'AllUsers' -and (-not $script:IsAdmin)) {
-        [Windows.Forms.MessageBox]::Show("'$($item.Name)' is installed in AllUsers scope. Click 'Elevate' in the top bar first.", 'Admin Required', 'OK', 'Warning') | Out-Null
+    $isAllUsers = ($item.Scope -eq 'AllUsers') -or
+                  ($item.Location -like "$env:ProgramFiles*") -or
+                  (-not [string]::IsNullOrWhiteSpace(${env:ProgramFiles(x86)}) -and ($item.Location -like "${env:ProgramFiles(x86)}*"))
+    if ($isAllUsers -and (-not $script:IsAdmin)) {
+        [Windows.Forms.MessageBox]::Show($form, "'$($item.Name)' is installed in AllUsers scope. Click 'Elevate' in the top bar first.", 'Admin Required', 'OK', 'Warning') | Out-Null
         return
     }
 
@@ -4572,6 +4870,7 @@ $btnUpdateLocal.Add_Click({
         $targetExe = Get-TargetHostExecutableForEdition -Edition $targetEdition
         if ([string]::IsNullOrWhiteSpace($targetExe) -or -not (Test-Path -LiteralPath $targetExe -PathType Leaf)) {
             [Windows.Forms.MessageBox]::Show(
+                $form,
                 "Cannot update '$($item.Name)' because it is installed for $targetEdition, and the $targetEdition executable was not found on this PC.",
                 "$targetEdition Not Found",
                 'OK',
@@ -4670,6 +4969,9 @@ catch {
             $psi.CreateNoWindow         = $true
             $psi.RedirectStandardOutput = $true
             $psi.RedirectStandardError  = $true
+            if ($psi.EnvironmentVariables.ContainsKey('PSModulePath')) {
+                $psi.EnvironmentVariables.Remove('PSModulePath')
+            }
 
             $proc = [System.Diagnostics.Process]::Start($psi)
             $outTask = $proc.StandardOutput.ReadToEndAsync()
@@ -4689,19 +4991,29 @@ catch {
 
     Invoke-AsyncTask -Work $work -ArgumentList @($item.Name, $item.Type, $item.Scope, $item.Location, $targetEdition, $targetExe) -OnComplete {
         param($res, $err, $state)
-        if ($err) { $lblStatus.Text = "Update failed: $err"; [Windows.Forms.MessageBox]::Show("Update failed:`n$err", 'Error', 'OK', 'Error') | Out-Null }
+        if ($err) { $lblStatus.Text = "Update failed: $err"; [Windows.Forms.MessageBox]::Show($form, "Update failed:`n$err", 'Error', 'OK', 'Error') | Out-Null }
         else { $lblStatus.Text = ($res | Out-String).Trim(); Invoke-ScanLocalPackages }
     }
 })
 
 $btnUninstallLocal.Add_Click({
-    if ($dgvLocal.SelectedRows.Count -eq 0) { return }
-    $idx = $dgvLocal.SelectedRows[0].Index
-    if ($idx -lt 0 -or $idx -ge $script:CurrentLocalResults.Count) { return }
-    $item = $script:CurrentLocalResults[$idx]
+    $selRow = if ($dgvLocal.SelectedRows.Count -gt 0) { $dgvLocal.SelectedRows[0] } else { $dgvLocal.CurrentRow }
+    if ($null -eq $selRow) {
+        [Windows.Forms.MessageBox]::Show($form, 'Select an installed script or module from the list first.', 'No Item Selected', 'OK', 'Information') | Out-Null
+        return
+    }
+    $item = $selRow.Tag
+    if ($null -eq $item) {
+        $idx = $selRow.Index
+        if ($idx -lt 0 -or $idx -ge $script:CurrentLocalResults.Count) { return }
+        $item = $script:CurrentLocalResults[$idx]
+    }
 
-    if ($item.Scope -eq 'AllUsers' -and (-not $script:IsAdmin)) {
-        [Windows.Forms.MessageBox]::Show("'$($item.Name)' is installed in AllUsers scope. Click 'Elevate' in the top bar first.", 'Admin Required', 'OK', 'Warning') | Out-Null
+    $isAllUsers = ($item.Scope -eq 'AllUsers') -or
+                  ($item.Location -like "$env:ProgramFiles*") -or
+                  (-not [string]::IsNullOrWhiteSpace(${env:ProgramFiles(x86)}) -and ($item.Location -like "${env:ProgramFiles(x86)}*"))
+    if ($isAllUsers -and (-not $script:IsAdmin)) {
+        [Windows.Forms.MessageBox]::Show($form, "'$($item.Name)' is installed in AllUsers scope. Click 'Elevate' in the top bar first.", 'Admin Required', 'OK', 'Warning') | Out-Null
         return
     }
 
@@ -4715,6 +5027,7 @@ $btnUninstallLocal.Add_Click({
         if ([string]::IsNullOrWhiteSpace($targetExe) -or -not (Test-Path -LiteralPath $targetExe -PathType Leaf)) {
             if ($item.Type -eq 'Script') {
                 $orphanAsk = [Windows.Forms.MessageBox]::Show(
+                    $form,
                     "$targetEdition is not installed on this PC, so '$($item.Name)' cannot be uninstalled via $targetEdition.`n`nRemove the orphaned script file and metadata directly from:`n$($item.Location)?",
                     "$targetEdition Not Found",
                     'YesNo',
@@ -4731,12 +5044,13 @@ $btnUninstallLocal.Add_Click({
                     }
                     catch {
                         $lblStatus.Text = "Uninstall failed: $($_.Exception.Message)"
-                        [Windows.Forms.MessageBox]::Show("Failed to remove orphaned files:`n$($_.Exception.Message)", 'Error', 'OK', 'Error') | Out-Null
+                        [Windows.Forms.MessageBox]::Show($form, "Failed to remove orphaned files:`n$($_.Exception.Message)", 'Error', 'OK', 'Error') | Out-Null
                     }
                 }
             }
             else {
                 [Windows.Forms.MessageBox]::Show(
+                    $form,
                     "Cannot uninstall '$($item.Name)' because it is installed for $targetEdition, and the $targetEdition executable was not found on this PC.",
                     "$targetEdition Not Found",
                     'OK',
@@ -4747,7 +5061,7 @@ $btnUninstallLocal.Add_Click({
         }
     }
 
-    if ([Windows.Forms.MessageBox]::Show("Uninstall $($item.Type) '$($item.Name)' (v$($item.InstalledVersion), $targetEdition)?", 'Confirm Uninstall', 'YesNo', 'Warning') -ne 'Yes') { return }
+    if ([Windows.Forms.MessageBox]::Show($form, "Uninstall $($item.Type) '$($item.Name)' (v$($item.InstalledVersion), $targetEdition)?", 'Confirm Uninstall', 'YesNo', 'Warning') -ne 'Yes') { return }
     $lblStatus.Text = "Uninstalling $($item.Type) '$($item.Name)' ($targetEdition)..."
 
     $work = {
@@ -4765,7 +5079,11 @@ if ($Type -eq 'Script') {
         [string]::IsNullOrWhiteSpace($Location) -or ($_.InstalledLocation -ieq $Location)
     })
     if ($matched.Count -gt 0) {
-        $matched | Uninstall-Script -Force -ErrorAction Stop
+        $uninstParams = @{ Name = $Name; Force = $true; ErrorAction = 'Stop' }
+        if ($matched[0].Version) {
+            $uninstParams['RequiredVersion'] = [string]$matched[0].Version
+        }
+        Uninstall-Script @uninstParams
         return
     }
 
@@ -4799,15 +5117,14 @@ else {
         ($_.InstalledLocation -like "$Location\*") -or
         ($Location -like "$($_.InstalledLocation)\*")
     })
-    if ($matched.Count -gt 0) {
-        $matched | Uninstall-Module -Force -ErrorAction Stop
-        return
-    }
 
     $uninstParams = @{ Name = $Name; Force = $true; ErrorAction = 'Stop' }
     $cmdMeta = Get-Command Uninstall-Module -ErrorAction SilentlyContinue
     if ($null -ne $cmdMeta -and $cmdMeta.Parameters.ContainsKey('AllVersions')) {
         $uninstParams['AllVersions'] = $true
+    }
+    elseif ($matched.Count -gt 0 -and $matched[0].Version) {
+        $uninstParams['RequiredVersion'] = [string]$matched[0].Version
     }
     Uninstall-Module @uninstParams
 }
@@ -4842,6 +5159,9 @@ catch {
             $psi.CreateNoWindow         = $true
             $psi.RedirectStandardOutput = $true
             $psi.RedirectStandardError  = $true
+            if ($psi.EnvironmentVariables.ContainsKey('PSModulePath')) {
+                $psi.EnvironmentVariables.Remove('PSModulePath')
+            }
 
             $proc = [System.Diagnostics.Process]::Start($psi)
             $outTask = $proc.StandardOutput.ReadToEndAsync()
@@ -4861,7 +5181,7 @@ catch {
 
     Invoke-AsyncTask -Work $work -ArgumentList @($item.Name, $item.Type, $item.Scope, $item.Location, $targetEdition, $targetExe) -OnComplete {
         param($res, $err, $state)
-        if ($err) { $lblStatus.Text = "Uninstall failed: $err"; [Windows.Forms.MessageBox]::Show("Uninstall failed:`n$err", 'Error', 'OK', 'Error') | Out-Null }
+        if ($err) { $lblStatus.Text = "Uninstall failed: $err"; [Windows.Forms.MessageBox]::Show($form, "Uninstall failed:`n$err", 'Error', 'OK', 'Error') | Out-Null }
         else { $lblStatus.Text = ($res | Out-String).Trim(); Invoke-ScanLocalPackages }
     }
 })
@@ -5439,13 +5759,6 @@ $form.Add_FormClosed({
     if ($script:PublishJob) { try { $script:PublishJob.Instance.Dispose() } catch { } }
 })
 
-foreach ($cb in @($cmbTheme, $cmbCategory, $cmbItemType, $cmbSort, $cmbSetScope, $cmbPubRecent)) {
-    Initialize-ThemedComboBox -ComboBox $cb
-}
-foreach ($grp in @($grpPubTarget, $grpPubMeta)) {
-    Initialize-ThemedGroupBox -GroupBox $grp
-}
-
 $txtPubRepo.Text        = $script:Config.PubRepository
 $txtPubAuthor.Text      = $script:Config.Username
 $txtPubCompany.Text     = $script:Config.PubDefaultCompany
@@ -5476,6 +5789,29 @@ Switch-MainTab 'Discover'
 Switch-MySubTab 'Published'
 Apply-Theme
 Enable-DotNetStrongCrypto | Out-Null
+
+$form.ResumeLayout($false)
+$form.PerformLayout()
+
+$form.Add_Load({
+    $wa   = [System.Windows.Forms.Screen]::FromControl($form).WorkingArea
+    $maxW = [Math]::Max(640, $wa.Width - 20)
+    $maxH = [Math]::Max(480, $wa.Height - 20)
+
+    $form.MinimumSize = New-Object Drawing.Size(
+        [Math]::Min($form.MinimumSize.Width, $maxW),
+        [Math]::Min($form.MinimumSize.Height, $maxH)
+    )
+    $form.Size = New-Object Drawing.Size(
+        [Math]::Min($form.Width, $maxW),
+        [Math]::Min($form.Height, $maxH)
+    )
+
+    if ($splitDiscover.ClientSize.Width -gt 700) {
+        $targetSplit = [int]($splitDiscover.ClientSize.Width * 0.61)
+        $splitDiscover.SplitterDistance = [Math]::Max(340, [Math]::Min($targetSplit, $splitDiscover.ClientSize.Width - 320))
+    }
+})
 
 $form.Add_Shown({
     $form.WindowState = 'Normal'
